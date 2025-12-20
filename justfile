@@ -22,6 +22,7 @@ clean:
     rm -f build/liblogos-blockchain-module.so
     rm -f liblogos-blockchain-module.so
     rm -f liblogos-blockchain-module.log
+    rm -rf nomos_db/
 
 clean-full: clean
     rm -rf build
@@ -30,3 +31,6 @@ rebuild: clean configure build
 
 run:
     ../logos-module-viewer/result/bin/logos-module-viewer --module liblogos-blockchain-module.so > liblogos-blockchain-module.log 2>&1
+
+nix:
+    nix develop .#
