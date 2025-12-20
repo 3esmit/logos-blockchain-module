@@ -34,3 +34,7 @@ run:
 
 nix:
     nix develop .#
+
+# View the log with unicode characters rendered
+logs:
+    perl -pe 's/\\u([0-9A-Fa-f]{4})/chr(hex($1))/ge' liblogos-blockchain-module.log | less -R
