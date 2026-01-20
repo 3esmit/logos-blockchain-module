@@ -1,5 +1,5 @@
 {
-  description = "Logos blockchain module - Qt6 plugin wrapping nomos-c (Nix)";
+  description = "Logos Blockchain Module - Qt6 Plugin (Nix)";
 
   inputs = {
     nixpkgs.follows = "logos-liblogos/nixpkgs";

@@ -35,45 +35,45 @@ add_custom_command(
 )
 add_custom_target(logos_blockchain_stage DEPENDS "${LOGOS_BLOCKCHAIN_STAGE_STAMP}")
 
-# ---- build + stage nomos-c (Rust) ----
+# ---- build + stage c-bindings (Rust) ----
 set(LOGOS_INSTALL_DIR "${CMAKE_BINARY_DIR}/logos_stage")
 file(MAKE_DIRECTORY "${LOGOS_INSTALL_DIR}/include" "${LOGOS_INSTALL_DIR}/lib")
 
 set(CARGO_TARGET_DIR "${CMAKE_BINARY_DIR}/cargo-target")
 
 if(APPLE)
-  set(NOMOS_EXT ".dylib")
+  set(LOGOS_BLOCKCHAIN_EXT ".dylib")
 elseif(WIN32)
-  set(NOMOS_EXT ".dll")
+  set(LOGOS_BLOCKCHAIN_EXT ".dll")
 else()
-  set(NOMOS_EXT ".so")
+  set(LOGOS_BLOCKCHAIN_EXT ".so")
 endif()
 
-set(NOMOS_C_SOURCE_DYLIB_NAME "liblibnomos${NOMOS_EXT}" CACHE STRING "Filename produced by cargo")
-set(NOMOS_C_STAGED_DYLIB_NAME "libnomos${NOMOS_EXT}"   CACHE STRING "Filename staged next to plugin")
-set(NOMOS_C_HEADER_NAME       "libnomos.h"             CACHE STRING "Header in nomos-c crate root")
+set(LOGOS_BLOCKCHAIN_C_SOURCE_DYLIB_NAME "liblib_logos_blockchain${LOGOS_BLOCKCHAIN_EXT}" CACHE STRING "Filename produced by cargo")
+set(LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME "lib_logos_blockchain${LOGOS_BLOCKCHAIN_EXT}"    CACHE STRING "Filename staged next to plugin")
+set(LOGOS_BLOCKCHAIN_C_HEADER_NAME       "lib_logos_blockchain.h"                         CACHE STRING "Header in c-bindings crate root")
 
-set(NOMOS_STAGED_DYLIB  "${LOGOS_INSTALL_DIR}/lib/${NOMOS_C_STAGED_DYLIB_NAME}")
-set(NOMOS_STAGED_HEADER "${LOGOS_INSTALL_DIR}/include/${NOMOS_C_HEADER_NAME}")
+set(LOGOS_BLOCKCHAIN_STAGED_DYLIB  "${LOGOS_INSTALL_DIR}/lib/${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}")
+set(LOGOS_BLOCKCHAIN_STAGED_HEADER "${LOGOS_INSTALL_DIR}/include/${LOGOS_BLOCKCHAIN_C_HEADER_NAME}")
 
 set(PATCHELF_COMMANDS "")
 if(UNIX AND NOT APPLE AND NOT WIN32)
   find_program(PATCHELF_EXE patchelf REQUIRED)
   set(PATCHELF_COMMANDS
-          COMMAND ${PATCHELF_EXE} --set-soname "${NOMOS_C_STAGED_DYLIB_NAME}" "${NOMOS_STAGED_DYLIB}"
+          COMMAND ${PATCHELF_EXE} --set-soname "${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}" "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
   )
 endif()
 
 add_custom_command(
-        OUTPUT "${NOMOS_STAGED_DYLIB}"
+        OUTPUT "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CARGO_TARGET_DIR}"
         COMMAND ${CMAKE_COMMAND} -E env
         CARGO_TERM_COLOR=always
         CARGO_TARGET_DIR=${CARGO_TARGET_DIR}
-        cargo build --release --package nomos-c
+        cargo build --release --package logos-blockchain-c
         COMMAND ${CMAKE_COMMAND} -E copy
-        "${CARGO_TARGET_DIR}/release/${NOMOS_C_SOURCE_DYLIB_NAME}"
-        "${NOMOS_STAGED_DYLIB}"
+        "${CARGO_TARGET_DIR}/release/${LOGOS_BLOCKCHAIN_C_SOURCE_DYLIB_NAME}"
+        "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         ${PATCHELF_COMMANDS}
         DEPENDS "${LOGOS_BLOCKCHAIN_STAGE_STAMP}"
         WORKING_DIRECTORY "${LOGOS_BLOCKCHAIN_WORKDIR}"
@@ -81,22 +81,22 @@ add_custom_command(
 )
 
 add_custom_command(
-        OUTPUT "${NOMOS_STAGED_HEADER}"
+        OUTPUT "${LOGOS_BLOCKCHAIN_STAGED_HEADER}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${LOGOS_BLOCKCHAIN_WORKDIR}/nomos-c/${NOMOS_C_HEADER_NAME}"
-        "${NOMOS_STAGED_HEADER}"
-        DEPENDS "${NOMOS_STAGED_DYLIB}"
+        "${LOGOS_BLOCKCHAIN_WORKDIR}/c-bindings/${LOGOS_BLOCKCHAIN_C_HEADER_NAME}"
+        "${LOGOS_BLOCKCHAIN_STAGED_HEADER}"
+        DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         VERBATIM
 )
 
-add_custom_target(logos_cargo_build DEPENDS "${NOMOS_STAGED_DYLIB}" "${NOMOS_STAGED_HEADER}")
+add_custom_target(logos_cargo_build DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}" "${LOGOS_BLOCKCHAIN_STAGED_HEADER}")
 
-add_library(nomos_c SHARED IMPORTED GLOBAL)
-set_target_properties(nomos_c PROPERTIES
-        IMPORTED_LOCATION             "${NOMOS_STAGED_DYLIB}"
+add_library(logos_blockchain_c SHARED IMPORTED GLOBAL)
+set_target_properties(logos_blockchain_c PROPERTIES
+        IMPORTED_LOCATION             "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         INTERFACE_INCLUDE_DIRECTORIES "${LOGOS_INSTALL_DIR}/include"
 )
-add_dependencies(nomos_c logos_cargo_build)
+add_dependencies(logos_blockchain_c logos_cargo_build)
 
 # ---- logos-cpp-sdk ----
 add_library(logos_cpp_sdk INTERFACE)
@@ -129,7 +129,7 @@ target_sources(${PLUGIN_TARGET} PRIVATE
 
 target_link_libraries(${PLUGIN_TARGET} PRIVATE
         Qt6::Core
-        nomos_c
+        logos_blockchain_c
         logos_cpp_sdk
         logos_core
 )
@@ -148,8 +148,8 @@ endif()
 
 add_custom_command(TARGET ${PLUGIN_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${NOMOS_STAGED_DYLIB}"
-        "$<TARGET_FILE_DIR:${PLUGIN_TARGET}>/${NOMOS_C_STAGED_DYLIB_NAME}"
+        "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
+        "$<TARGET_FILE_DIR:${PLUGIN_TARGET}>/${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}"
         VERBATIM
 )
 

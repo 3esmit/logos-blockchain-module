@@ -5,7 +5,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <libnomos.h>
+#include <lib_logos_blockchain.h>
 #ifdef __cplusplus
 }
 #endif
@@ -15,7 +15,7 @@ class LogosBlockchainModule : public LogosBlockchainModuleAPI {
     Q_PLUGIN_METADATA(IID LogosBlockchainModuleInterface_iid FILE "metadata.json")
 
 private:
-    NomosNode* node = nullptr;
+    LogosBlockchainNode* node = nullptr;
 
 public:
     LogosBlockchainModule() = default;
@@ -38,7 +38,7 @@ public:
         }
 
         const QByteArray path = config_path.toUtf8();
-        InitializedNomosNodeResult result = start_nomos_node(path.constData());
+        InitializedLogosBlockchainNodeResult result = start_lb_node(path.constData());
 
         if (!is_ok(&result.error)) {
             qCritical() << "Failed to start Nomos node. Error code:" << result.error;
