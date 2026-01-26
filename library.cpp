@@ -32,6 +32,8 @@ public:
             return 1;
         }
 
+        // TODO: Default configuration file
+
         // TODO: Ensure proper cleanup on SIGINT
 
         const QByteArray path = config_path.toUtf8();
