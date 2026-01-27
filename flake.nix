@@ -5,11 +5,11 @@
     nixpkgs.follows = "logos-liblogos/nixpkgs";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-core.url = "github:logos-co/logos-cpp-sdk";
-
     logos-blockchain = {
       url = "github:logos-blockchain/logos-blockchain";
       flake = false;
     };
+    logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
 
   outputs = { self, nixpkgs, ... }@inputs:
@@ -22,6 +22,7 @@
           logosCore = inputs.logos-core.packages.${system}.default;
           logosBlockchain = inputs.logos-blockchain;
 
+          # 1. Environment variables shared by build and shell
           env = {
             LOGOS_CORE_ROOT = "${logosCore}";
             LOGOS_BLOCKCHAIN_ROOT = "${logosBlockchain}";
@@ -29,9 +30,8 @@
             CLANG_PATH = "${llvmPkgs.clang}/bin/clang";
           };
 
-          args = {
-            inherit (env) LOGOS_CORE_ROOT LOGOS_BLOCKCHAIN_ROOT LIBCLANG_PATH CLANG_PATH;
-
+          # 2. Tools and libraries shared by build and shell
+          baseArgs = env // {
             nativeBuildInputs = [
               pkgs.cmake
               pkgs.ninja
@@ -52,40 +52,64 @@
               pkgs.libiconv
             ];
           };
+
+          viewer = inputs.logos-module-viewer.packages.${system}.default;
         in
-        f { inherit pkgs args; });
+        f { inherit pkgs system baseArgs viewer; });
     in
     {
-      packages = forAllSystems ({ pkgs, args }:
+      packages = forAllSystems ({ pkgs, baseArgs, ... }:
         {
-          default = pkgs.stdenv.mkDerivation (args // {
+          default = pkgs.stdenv.mkDerivation (baseArgs // {
             pname = "logos-blockchain-module";
             version = "dev";
             src = ./.;
 
-            nativeBuildInputs = args.nativeBuildInputs ++ [ pkgs.qt6.wrapQtAppsHook ];
+            nativeBuildInputs = baseArgs.nativeBuildInputs ++ [ pkgs.qt6.wrapQtAppsHook ];
 
             CARGO_HOME = "${"$"}TMPDIR/cargo-home";
-
-            preConfigure = ''
-              mkdir -p $CARGO_HOME
-            '';
+            preConfigure = "mkdir -p $CARGO_HOME";
           });
         }
       );
 
-      devShells = forAllSystems ({ pkgs, args }:
+      apps = forAllSystems ({ pkgs, system, viewer, ... }:
+        let
+          pkg = self.packages.${system}.default;
+        in
         {
-          default = pkgs.mkShell (args // {
+          default = {
+            type = "app";
+            program = "${pkgs.writeShellScriptBin "inspect-module" ''
+              ${viewer}/bin/logos-module-viewer --module ${pkg}/lib/liblogos-blockchain-module.so
+            ''}/bin/inspect-module";
+          };
+        }
+      );
+
+      devShells = forAllSystems ({ pkgs, system, ... }:
+        let
+          pkg = self.packages.${system}.default;
+        in
+        {
+          default = pkgs.mkShell {
+            inputsFrom = [ pkg ];
+
+            # Inherit environment variables from the package
+            inherit (pkg) LOGOS_CORE_ROOT LOGOS_BLOCKCHAIN_ROOT LIBCLANG_PATH CLANG_PATH;
+
             shellHook = ''
-              echo "Logos Blockchain Module dev environment"
-              echo "LOGOS_CORE_ROOT:       $LOGOS_CORE_ROOT"
-              echo "LOGOS_BLOCKCHAIN_ROOT: $LOGOS_BLOCKCHAIN_ROOT"
-              echo ""
-              echo "Build with:"
-              echo "  just build"
+              BLUE='\e[1;34m'
+              GREEN='\e[1;32m'
+              YELLOW='\e[1;33m'
+              RESET='\e[0m'
+
+              echo -e "\n''${BLUE}=== Logos Blockchain Module Development Environment ===''${RESET}"
+              echo -e "''${GREEN}Core SDK:''${RESET}       $LOGOS_CORE_ROOT"
+              echo -e "''${GREEN}Blockchain:''${RESET}     $LOGOS_BLOCKCHAIN_ROOT"
+              echo -e "''${BLUE}---------------------------------------------------------''${RESET}"
             '';
-          });
+          };
         }
       );
     };

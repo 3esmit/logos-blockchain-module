@@ -10,7 +10,7 @@ build:
     cmake --build build --parallel --target liblogos-blockchain-module
 
 update: clean-full
-    cmake --build build --parallel --target logos_cargo_build
+    cmake --build build --parallel --target logos_blockchain_libs
     just build
 
 clean:

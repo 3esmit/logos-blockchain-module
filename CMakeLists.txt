@@ -4,7 +4,6 @@ project(logos-blockchain-module LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(LOGOS_BUILD_DEPS_BY_DEFAULT "Always build Rust deps when building the plugin" OFF)
 
 set(LOGOS_CORE_ROOT "$ENV{LOGOS_CORE_ROOT}" CACHE PATH "Path to logos-core root")
 set(LOGOS_BLOCKCHAIN_ROOT "$ENV{LOGOS_BLOCKCHAIN_ROOT}" CACHE PATH "Path to logos-blockchain source root")
@@ -75,6 +74,7 @@ add_custom_command(
         "${CARGO_TARGET_DIR}/release/${LOGOS_BLOCKCHAIN_C_SOURCE_DYLIB_NAME}"
         "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         ${PATCHELF_COMMANDS}
+        DEPENDS "${LOGOS_BLOCKCHAIN_ROOT}/Cargo.toml"
         VERBATIM
 )
 
@@ -87,14 +87,14 @@ add_custom_command(
         VERBATIM
 )
 
-add_custom_target(logos_cargo_build DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}" "${LOGOS_BLOCKCHAIN_STAGED_HEADER}")
+add_custom_target(logos_blockchain_libs DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}" "${LOGOS_BLOCKCHAIN_STAGED_HEADER}")
 
-add_library(logos_blockchain_c SHARED IMPORTED GLOBAL)
-set_target_properties(logos_blockchain_c PROPERTIES
+add_library(logos_blockchain_interface SHARED IMPORTED GLOBAL)
+set_target_properties(logos_blockchain_interface PROPERTIES
         IMPORTED_LOCATION             "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
         INTERFACE_INCLUDE_DIRECTORIES "${INTERNAL_STAGE}/include"
 )
-add_dependencies(logos_blockchain_c logos_cargo_build)
+add_dependencies(logos_blockchain_interface logos_blockchain_libs)
 
 # ---- C++ SDK Target (using staged symlinks) ----
 add_library(logos_cpp_sdk INTERFACE)
@@ -124,16 +124,15 @@ target_sources(${PLUGIN_TARGET} PRIVATE
 
 target_link_libraries(${PLUGIN_TARGET} PRIVATE
         Qt6::Core
-        logos_blockchain_c
+        logos_blockchain_interface
         logos_cpp_sdk
         logos_core
 )
 
 target_compile_definitions(${PLUGIN_TARGET} PRIVATE USING_QT)
 
-if(LOGOS_BUILD_DEPS_BY_DEFAULT)
-  add_dependencies(${PLUGIN_TARGET} logos_cargo_build)
-endif()
+# Ensure the Rust backend is always built before the plugin
+add_dependencies(${PLUGIN_TARGET} logos_blockchain_libs)
 
 # RPATH so the plugin finds the Rust .so in the same folder
 if(APPLE)
