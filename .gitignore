@@ -3,19 +3,10 @@
 *.bak
 
 # CMake generated files
-Makefile
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-cmake-build-debug
 .cache/
 build/
 target/
-
-# Artifacts
-liblogos-blockchain-module.so
-liblogos-blockchain-module.log
+result
 
 # Node
-logos_blockchain_db/
 resources/

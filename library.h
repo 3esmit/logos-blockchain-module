@@ -6,13 +6,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <lib_logos_blockchain.h>
+#include <logos_blockchain.h>
 #ifdef __cplusplus
 }
 #endif
 
 class LogosBlockchainModuleAPI : public QObject, public PluginInterface {
-    Q_OBJECT
     Q_INTERFACES(PluginInterface)
 
 public:

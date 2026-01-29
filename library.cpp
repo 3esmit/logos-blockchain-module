@@ -37,7 +37,8 @@ public:
         // TODO: Ensure proper cleanup on SIGINT
 
         const QByteArray path = config_path.toUtf8();
-        auto [value, error] = start_lb_node(path.constData());
+        const char* deployment = nullptr;
+        auto [value, error] = start_lb_node(path.constData(), deployment);
 
         if (!is_ok(&error)) {
             qCritical() << "Failed to start the node. Error:" << error;
