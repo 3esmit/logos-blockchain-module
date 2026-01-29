@@ -162,12 +162,13 @@ set_target_properties(${PLUGIN_TARGET} PROPERTIES
 )
 
 target_sources(${PLUGIN_TARGET} PRIVATE
-        src/library.cpp
+        src/logos_blockchain_module.cpp
+        src/logos_blockchain_module.h
         metadata.json
 )
 
 set_target_properties(${PLUGIN_TARGET} PROPERTIES
-        PUBLIC_HEADER "src/library.h"
+        PUBLIC_HEADER "src/i_logos_blockchain_module.h"
 )
 
 target_include_directories(${PLUGIN_TARGET} PRIVATE
