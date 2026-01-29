@@ -162,14 +162,17 @@ set_target_properties(${PLUGIN_TARGET} PROPERTIES
 )
 
 target_sources(${PLUGIN_TARGET} PRIVATE
-        library.cpp
+        src/library.cpp
         metadata.json
 )
 
 set_target_properties(${PLUGIN_TARGET} PROPERTIES
-        PUBLIC_HEADER "library.h"
+        PUBLIC_HEADER "src/library.h"
 )
 
+target_include_directories(${PLUGIN_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 target_link_libraries(${PLUGIN_TARGET} PRIVATE
         Qt6::Core
@@ -207,7 +210,7 @@ install(TARGETS ${PLUGIN_TARGET}
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
         RUNTIME DESTINATION bin
+        PUBLIC_HEADER DESTINATION include
 )
-install(FILES library.h DESTINATION include)
 install(DIRECTORY "${LOGOS_BLOCKCHAIN_INCLUDE}/" DESTINATION include)
 install(FILES "${LOGOS_BLOCKCHAIN_DYLIB}" DESTINATION lib)
