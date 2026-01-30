@@ -94,6 +94,10 @@
           pkgs = mkPkgs system;
           logosBlockchainModule = self.packages.${system}.logos-blockchain-module;
           logosModuleViewer = logos-module-viewer.packages.${system}.default;
+          extension =
+                if pkgs.stdenv.isDarwin then "dylib"
+                else if pkgs.stdenv.isWindows then "dll"
+                else "so";
         in
         {
           default = {
@@ -101,7 +105,7 @@
             program =
               "${pkgs.writeShellScriptBin "inspect-module" ''
                 exec ${logosModuleViewer}/bin/logos-module-viewer \
-                  --module ${logosBlockchainModule}/lib/liblogos-blockchain-module.so
+                  --module ${logosBlockchainModule}/lib/liblogos-blockchain-module.${extension}
               ''}/bin/inspect-module";
           };
         }
