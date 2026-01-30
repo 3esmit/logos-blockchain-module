@@ -12,7 +12,6 @@ extern "C" {
 #endif
 
 class ILogosBlockchainModule : public QObject, public PluginInterface {
-    Q_OBJECT
     Q_INTERFACES(PluginInterface)
 
 public:

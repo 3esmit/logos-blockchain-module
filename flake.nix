@@ -59,6 +59,7 @@
 
             buildInputs = [
               pkgs.qt6.qtbase
+              pkgs.qt6.qtremoteobjects
               pkgs.qt6.qttools
               llvmPkgs.clang
               llvmPkgs.libclang
