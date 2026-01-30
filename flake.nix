@@ -66,10 +66,12 @@
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
+              pkgs.cacert
             ];
 
             LIBCLANG_PATH = "${llvmPkgs.libclang.lib}/lib";
             CLANG_PATH = "${llvmPkgs.clang}/bin/clang";
+            SSL_CERT_FILE = lib.optionalString pkgs.stdenv.isDarwin "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
             cmakeFlags = [
               "-DLOGOS_CORE_ROOT=${logosCore}"
