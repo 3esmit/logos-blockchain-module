@@ -4,160 +4,215 @@ project(logos-blockchain-module LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(COPY_PLUGIN_TO_SOURCE_DIR "Copy built plugin to repo root (dev convenience)" ON)
-option(LOGOS_BUILD_DEPS_BY_DEFAULT "Always stage+build Rust deps when building the plugin" OFF)
+# ---- Options ----
+option(LOGOS_MODULE_BUNDLE "Create local runtime bundle in target/." ON)
+set(LOGOS_CORE_ROOT "" CACHE PATH "Path to logos-core root directory.")
+set(LOGOS_BLOCKCHAIN_ROOT "" CACHE PATH "Path to logos-blockchain source root.")
+set(LOGOS_BLOCKCHAIN_LIB "" CACHE PATH "Path to prebuilt logos-blockchain lib.")
+set(LOGOS_BLOCKCHAIN_INCLUDE "" CACHE PATH "Path to prebuilt logos-blockchain include.")
 
-set(LOGOS_CPP_SDK_ROOT "" CACHE PATH "Path to logos-cpp-sdk root")
-set(LOGOS_BLOCKCHAIN_ROOT "" CACHE PATH "Path to logos-blockchain source root")
+set(HAS_LOGOS_CORE_ROOT FALSE)
+set(HAS_LOGOS_BLOCKCHAIN_ROOT FALSE)
+set(HAS_LOGOS_BLOCKCHAIN_LIB FALSE)
+set(HAS_LOGOS_BLOCKCHAIN_INCLUDE FALSE)
 
-if(LOGOS_CPP_SDK_ROOT STREQUAL "")
-  message(FATAL_ERROR "LOGOS_CPP_SDK_ROOT not set. Pass -DLOGOS_CPP_SDK_ROOT=/path/to/logos-cpp-sdk")
+if (DEFINED LOGOS_CORE_ROOT AND NOT "${LOGOS_CORE_ROOT}" STREQUAL "")
+    set(HAS_LOGOS_CORE_ROOT TRUE)
 endif()
-if(LOGOS_BLOCKCHAIN_ROOT STREQUAL "")
-  message(FATAL_ERROR "LOGOS_BLOCKCHAIN_ROOT not set. Pass -DLOGOS_BLOCKCHAIN_ROOT=/path/to/logos-blockchain")
+
+if (DEFINED LOGOS_BLOCKCHAIN_ROOT AND NOT "${LOGOS_BLOCKCHAIN_ROOT}" STREQUAL "")
+    set(HAS_LOGOS_BLOCKCHAIN_ROOT TRUE)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core)
+if(DEFINED LOGOS_BLOCKCHAIN_LIB AND NOT "${LOGOS_BLOCKCHAIN_LIB}" STREQUAL "")
+    set(HAS_LOGOS_BLOCKCHAIN_LIB TRUE)
+endif()
+
+if(DEFINED LOGOS_BLOCKCHAIN_INCLUDE AND NOT "${LOGOS_BLOCKCHAIN_INCLUDE}" STREQUAL "")
+    set(HAS_LOGOS_BLOCKCHAIN_INCLUDE TRUE)
+endif()
+
+if (NOT HAS_LOGOS_CORE_ROOT)
+    message(FATAL_ERROR "LOGOS_CORE_ROOT must be set to the logos-core root directory.")
+endif()
+
+if(HAS_LOGOS_BLOCKCHAIN_LIB AND HAS_LOGOS_BLOCKCHAIN_INCLUDE AND NOT HAS_LOGOS_BLOCKCHAIN_ROOT)
+    message(STATUS "Using prebuilt logos-blockchain.")
+    set(LOGOS_BLOCKCHAIN_PREBUILT TRUE)
+elseif(NOT HAS_LOGOS_BLOCKCHAIN_LIB AND NOT HAS_LOGOS_BLOCKCHAIN_INCLUDE AND HAS_LOGOS_BLOCKCHAIN_ROOT)
+    message(STATUS "Building logos-blockchain from source.")
+    set(LOGOS_BLOCKCHAIN_PREBUILT FALSE)
+else()
+    message(FATAL_ERROR "Either both LOGOS_BLOCKCHAIN_LIB and LOGOS_BLOCKCHAIN_INCLUDE must be set for prebuilt logos-blockchain, or only LOGOS_BLOCKCHAIN_ROOT must be set for building from source.")
+endif()
+
+# ---- Qt ----
+find_package(Qt6 REQUIRED COMPONENTS Core RemoteObjects)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# ---- writable stage (Nix store is read-only) ----
-set(LOGOS_BLOCKCHAIN_WORKDIR     "${CMAKE_BINARY_DIR}/logos_blockchain_src")
-set(LOGOS_BLOCKCHAIN_STAGE_STAMP "${LOGOS_BLOCKCHAIN_WORKDIR}/.staged")
+# ---- Directories ----
+set(WORKSPACE_ROOT  "${CMAKE_BINARY_DIR}/workspace")
+set(TARGET_DIR      "${CMAKE_SOURCE_DIR}/target")
+file(MAKE_DIRECTORY "${WORKSPACE_ROOT}" "${TARGET_DIR}")
 
-add_custom_command(
-        OUTPUT  "${LOGOS_BLOCKCHAIN_STAGE_STAMP}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${LOGOS_BLOCKCHAIN_WORKDIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory  "${LOGOS_BLOCKCHAIN_ROOT}" "${LOGOS_BLOCKCHAIN_WORKDIR}"
-        COMMAND ${CMAKE_COMMAND} -E touch "${LOGOS_BLOCKCHAIN_STAGE_STAMP}"
-        VERBATIM
-)
-add_custom_target(logos_blockchain_stage DEPENDS "${LOGOS_BLOCKCHAIN_STAGE_STAMP}")
+# ---- Logos Core SDK ----
+set(SDK_LIB "${LOGOS_CORE_ROOT}/lib/liblogos_sdk.a")
+set(SDK_INC "${LOGOS_CORE_ROOT}/include")
 
-# ---- build + stage c-bindings (Rust) ----
-set(LOGOS_INSTALL_DIR "${CMAKE_BINARY_DIR}/logos_stage")
-file(MAKE_DIRECTORY "${LOGOS_INSTALL_DIR}/include" "${LOGOS_INSTALL_DIR}/lib")
-
-set(CARGO_TARGET_DIR "${CMAKE_BINARY_DIR}/cargo-target")
-
+# ---- OS Specifics ----
 if(APPLE)
-  set(LOGOS_BLOCKCHAIN_EXT ".dylib")
+    set(DYLIB_EXT ".dylib")
 elseif(WIN32)
-  set(LOGOS_BLOCKCHAIN_EXT ".dll")
+    set(DYLIB_EXT ".dll")
+    set(IMPLIB_EXT ".lib")
 else()
-  set(LOGOS_BLOCKCHAIN_EXT ".so")
+    set(DYLIB_EXT ".so")
 endif()
 
-set(LOGOS_BLOCKCHAIN_C_SOURCE_DYLIB_NAME "liblib_logos_blockchain${LOGOS_BLOCKCHAIN_EXT}" CACHE STRING "Filename produced by cargo")
-set(LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME "lib_logos_blockchain${LOGOS_BLOCKCHAIN_EXT}"    CACHE STRING "Filename staged next to plugin")
-set(LOGOS_BLOCKCHAIN_C_HEADER_NAME       "lib_logos_blockchain.h"                         CACHE STRING "Header in c-bindings crate root")
+# NOTE (Windows):
+# Rust cdylib typically produces:
+#   - logos_blockchain.dll (runtime)
+#   - logos_blockchain.lib (import lib)
+# The Windows build hasn't been yet, so adjust accordingly if the DLL is named without the 'lib' prefix.
 
-set(LOGOS_BLOCKCHAIN_STAGED_DYLIB  "${LOGOS_INSTALL_DIR}/lib/${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}")
-set(LOGOS_BLOCKCHAIN_STAGED_HEADER "${LOGOS_INSTALL_DIR}/include/${LOGOS_BLOCKCHAIN_C_HEADER_NAME}")
+# ---- Logos Blockchain (build OR consume) ----
+if(LOGOS_BLOCKCHAIN_PREBUILT)
+    set(LOGOS_BLOCKCHAIN_DYLIB "${LOGOS_BLOCKCHAIN_LIB}/liblogos_blockchain${DYLIB_EXT}")
 
-set(PATCHELF_COMMANDS "")
-if(UNIX AND NOT APPLE AND NOT WIN32)
-  find_program(PATCHELF_EXE patchelf REQUIRED)
-  set(PATCHELF_COMMANDS
-          COMMAND ${PATCHELF_EXE} --set-soname "${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}" "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-  )
+    if(WIN32)
+        set(LOGOS_BLOCKCHAIN_IMPLIB "${LOGOS_BLOCKCHAIN_LIB}/logos_blockchain${IMPLIB_EXT}")
+    endif()
+
+    add_custom_target(logos_blockchain_libs)
+
+else()
+    find_program(CARGO_EXECUTABLE cargo REQUIRED)
+
+    set(CARGO_TARGET_DIR       "${WORKSPACE_ROOT}/logos-blockchain/target")
+    set(INTERNAL_STAGE         "${WORKSPACE_ROOT}/stage")
+    set(INTERNAL_STAGE_LIB     "${INTERNAL_STAGE}/lib")
+    set(INTERNAL_STAGE_INCLUDE "${INTERNAL_STAGE}/include")
+    file(MAKE_DIRECTORY "${CARGO_TARGET_DIR}" "${INTERNAL_STAGE_LIB}" "${INTERNAL_STAGE_INCLUDE}")
+
+    set(LOGOS_BLOCKCHAIN_LIB     "${INTERNAL_STAGE_LIB}")
+    set(LOGOS_BLOCKCHAIN_INCLUDE "${INTERNAL_STAGE_INCLUDE}")
+
+    set(LOGOS_BLOCKCHAIN_DYLIB  "${INTERNAL_STAGE_LIB}/liblogos_blockchain${DYLIB_EXT}")
+    set(LOGOS_BLOCKCHAIN_HEADER "${INTERNAL_STAGE_INCLUDE}/logos_blockchain.h")
+
+    add_custom_command(
+            OUTPUT "${LOGOS_BLOCKCHAIN_DYLIB}"
+            COMMAND ${CMAKE_COMMAND} -E env
+            CARGO_TARGET_DIR=${CARGO_TARGET_DIR}
+            ${CARGO_EXECUTABLE} build --release
+            --package logos-blockchain-c
+            --manifest-path "${LOGOS_BLOCKCHAIN_ROOT}/Cargo.toml"
+            COMMAND ${CMAKE_COMMAND} -E copy
+            "${CARGO_TARGET_DIR}/release/liblogos_blockchain${DYLIB_EXT}"
+            "${LOGOS_BLOCKCHAIN_DYLIB}"
+            DEPENDS "${LOGOS_BLOCKCHAIN_ROOT}/Cargo.toml"
+            VERBATIM
+    )
+
+    add_custom_command(
+            OUTPUT "${LOGOS_BLOCKCHAIN_HEADER}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LOGOS_BLOCKCHAIN_ROOT}/c-bindings/logos_blockchain.h"
+            "${LOGOS_BLOCKCHAIN_HEADER}"
+            DEPENDS "${LOGOS_BLOCKCHAIN_DYLIB}"
+            VERBATIM
+    )
+
+    add_custom_target(logos_blockchain_libs DEPENDS "${LOGOS_BLOCKCHAIN_DYLIB}" "${LOGOS_BLOCKCHAIN_HEADER}")
 endif()
 
-add_custom_command(
-        OUTPUT "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CARGO_TARGET_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        CARGO_TERM_COLOR=always
-        CARGO_TARGET_DIR=${CARGO_TARGET_DIR}
-        cargo build --release --package logos-blockchain-c
-        COMMAND ${CMAKE_COMMAND} -E copy
-        "${CARGO_TARGET_DIR}/release/${LOGOS_BLOCKCHAIN_C_SOURCE_DYLIB_NAME}"
-        "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-        ${PATCHELF_COMMANDS}
-        DEPENDS "${LOGOS_BLOCKCHAIN_STAGE_STAMP}"
-        WORKING_DIRECTORY "${LOGOS_BLOCKCHAIN_WORKDIR}"
-        VERBATIM
+# ---- Imported targets ----
+add_library(logos_blockchain_interface SHARED IMPORTED GLOBAL)
+set_target_properties(logos_blockchain_interface PROPERTIES
+        IMPORTED_LOCATION "${LOGOS_BLOCKCHAIN_DYLIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LOGOS_BLOCKCHAIN_INCLUDE}"
 )
 
-add_custom_command(
-        OUTPUT "${LOGOS_BLOCKCHAIN_STAGED_HEADER}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${LOGOS_BLOCKCHAIN_WORKDIR}/c-bindings/${LOGOS_BLOCKCHAIN_C_HEADER_NAME}"
-        "${LOGOS_BLOCKCHAIN_STAGED_HEADER}"
-        DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-        VERBATIM
-)
+if(NOT LOGOS_BLOCKCHAIN_PREBUILT)
+    add_dependencies(logos_blockchain_interface logos_blockchain_libs)
+endif()
 
-add_custom_target(logos_cargo_build DEPENDS "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}" "${LOGOS_BLOCKCHAIN_STAGED_HEADER}")
-
-add_library(logos_blockchain_c SHARED IMPORTED GLOBAL)
-set_target_properties(logos_blockchain_c PROPERTIES
-        IMPORTED_LOCATION             "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${LOGOS_INSTALL_DIR}/include"
-)
-add_dependencies(logos_blockchain_c logos_cargo_build)
-
-# ---- logos-cpp-sdk ----
-add_library(logos_cpp_sdk INTERFACE)
-target_include_directories(logos_cpp_sdk INTERFACE
-        "${LOGOS_CPP_SDK_ROOT}/include/core"
-        "${LOGOS_CPP_SDK_ROOT}/include/cpp"
-        "${LOGOS_CPP_SDK_ROOT}/include"
-)
+if(WIN32)
+    set_target_properties(logos_blockchain_interface PROPERTIES IMPORTED_IMPLIB "${LOGOS_BLOCKCHAIN_IMPLIB}")
+endif()
 
 add_library(logos_core STATIC IMPORTED)
 set_target_properties(logos_core PROPERTIES
-        IMPORTED_LOCATION "${LOGOS_CPP_SDK_ROOT}/lib/liblogos_sdk.a"
+        IMPORTED_LOCATION "${SDK_LIB}"
 )
 
-# ---- plugin ----
-set(MODULE_ID "liblogos-blockchain-module")
-set(PLUGIN_TARGET "${MODULE_ID}")
+add_library(logos_cpp_sdk INTERFACE)
+target_include_directories(logos_cpp_sdk INTERFACE "${SDK_INC}")
+
+# ---- Plugin ----
+set(PLUGIN_TARGET liblogos-blockchain-module)
 
 qt_add_plugin(${PLUGIN_TARGET} CLASS_NAME LogosBlockchainModule)
 
-# Keep the filename expected by the viewer/tooling (if you still want it this way)
 set_target_properties(${PLUGIN_TARGET} PROPERTIES
         OUTPUT_NAME "logos-blockchain-module"
+        LIBRARY_OUTPUT_DIRECTORY "${TARGET_DIR}"
 )
 
 target_sources(${PLUGIN_TARGET} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/library.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json"
+        src/logos_blockchain_module.cpp
+        src/logos_blockchain_module.h
+        metadata.json
+)
+
+set_target_properties(${PLUGIN_TARGET} PROPERTIES
+        PUBLIC_HEADER "src/i_logos_blockchain_module.h"
+)
+
+target_include_directories(${PLUGIN_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(${PLUGIN_TARGET} PRIVATE
         Qt6::Core
-        logos_blockchain_c
+        Qt6::RemoteObjects
+        logos_blockchain_interface
         logos_cpp_sdk
         logos_core
 )
 
-target_compile_definitions(${PLUGIN_TARGET} PRIVATE USING_QT)
-
-if(LOGOS_BUILD_DEPS_BY_DEFAULT)
-  add_dependencies(${PLUGIN_TARGET} logos_blockchain_stage logos_cargo_build)
-endif()
+add_dependencies(${PLUGIN_TARGET} logos_blockchain_libs)
 
 if(APPLE)
-  set_target_properties(${PLUGIN_TARGET} PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+    set_target_properties(${PLUGIN_TARGET} PROPERTIES
+            BUILD_RPATH "@loader_path"
+            INSTALL_RPATH "@loader_path"
+    )
 elseif(UNIX)
-  set_target_properties(${PLUGIN_TARGET} PROPERTIES BUILD_RPATH "$ORIGIN"      INSTALL_RPATH "$ORIGIN")
+    set_target_properties(${PLUGIN_TARGET} PROPERTIES
+            BUILD_RPATH "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
-add_custom_command(TARGET ${PLUGIN_TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${LOGOS_BLOCKCHAIN_STAGED_DYLIB}"
-        "$<TARGET_FILE_DIR:${PLUGIN_TARGET}>/${LOGOS_BLOCKCHAIN_C_STAGED_DYLIB_NAME}"
-        VERBATIM
+# ---- Optional local bundle ----
+if(LOGOS_MODULE_BUNDLE)
+    add_custom_command(TARGET ${PLUGIN_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LOGOS_BLOCKCHAIN_DYLIB}"
+            "${TARGET_DIR}/liblogos_blockchain${DYLIB_EXT}"
+            VERBATIM
+    )
+endif()
+
+# ---- Install ----
+install(TARGETS ${PLUGIN_TARGET}
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+        PUBLIC_HEADER DESTINATION include
 )
-
-if(COPY_PLUGIN_TO_SOURCE_DIR)
-  add_custom_command(TARGET ${PLUGIN_TARGET} POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "$<TARGET_FILE:${PLUGIN_TARGET}>"
-          "${CMAKE_SOURCE_DIR}/$<TARGET_FILE_NAME:${PLUGIN_TARGET}>"
-          VERBATIM
-  )
-endif()
+install(DIRECTORY "${LOGOS_BLOCKCHAIN_INCLUDE}/" DESTINATION include)
+install(FILES "${LOGOS_BLOCKCHAIN_DYLIB}" DESTINATION lib)

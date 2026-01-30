@@ -1,34 +1,51 @@
 {
-  description = "Logos Blockchain Module - Qt6 Plugin (Nix)";
+  description = "Logos Blockchain Module - Qt6 Plugin";
 
   inputs = {
     nixpkgs.follows = "logos-liblogos/nixpkgs";
-    logos-liblogos.url = "github:logos-co/logos-liblogos";
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
 
-    logos-blockchain = {
-      url = "github:logos-blockchain/logos-blockchain";
-      flake = false;
-    };
+    logos-liblogos.url = "github:logos-co/logos-liblogos";
+    logos-core.url = "github:logos-co/logos-cpp-sdk";
+
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=ci/circuits/integrate-binaries-on-tests-using-nix";
+
+    logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
 
-  outputs = { self, nixpkgs, logos-liblogos, logos-cpp-sdk, logos-blockchain }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      logos-core,
+      logos-blockchain,
+      logos-module-viewer,
+      ...
+    }:
     let
-      systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
-        pkgs = import nixpkgs { inherit system; };
-        logosSdk = logos-cpp-sdk.packages.${system}.default;
-        logosBlockchainSrc = logos-blockchain;
-      });
+      lib = nixpkgs.lib;
+
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+
+      forAll = lib.genAttrs systems;
+
+      mkPkgs = system: import nixpkgs { inherit system; };
     in
     {
-      packages = forAllSystems ({ pkgs, logosSdk, logosBlockchainSrc }:
+      packages = forAll (
+        system:
         let
-          qt = pkgs.qt6;
+          pkgs = mkPkgs system;
           llvmPkgs = pkgs.llvmPackages;
-        in
-        {
-          default = pkgs.stdenv.mkDerivation {
+
+          logosCore = logos-core.packages.${system}.default;
+          logosBlockchainC = logos-blockchain.packages.${system}.logos-blockchain-c;
+
+          logosBlockchainModule = pkgs.stdenv.mkDerivation {
             pname = "logos-blockchain-module";
             version = "dev";
             src = ./.;
@@ -37,104 +54,93 @@
               pkgs.cmake
               pkgs.ninja
               pkgs.pkg-config
-              qt.wrapQtAppsHook
-              pkgs.patchelf
+              pkgs.qt6.wrapQtAppsHook
             ];
 
             buildInputs = [
-              qt.qtbase
-              qt.qttools
-
-              pkgs.rustc
-              pkgs.cargo
-              pkgs.git
-
+              pkgs.qt6.qtbase
+              pkgs.qt6.qtremoteobjects
+              pkgs.qt6.qttools
               llvmPkgs.clang
-              llvmPkgs.llvm
               llvmPkgs.libclang
-            ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              logosBlockchainC
+            ]
+            ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
+              pkgs.cacert
             ];
-
-            LOGOS_CPP_SDK_ROOT = "${logosSdk}";
-            LOGOS_BLOCKCHAIN_ROOT = "${logosBlockchainSrc}";
 
             LIBCLANG_PATH = "${llvmPkgs.libclang.lib}/lib";
             CLANG_PATH = "${llvmPkgs.clang}/bin/clang";
+            SSL_CERT_FILE = lib.optionalString pkgs.stdenv.isDarwin "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
-            CARGO_HOME = "${"$"}TMPDIR/cargo-home";
+            cmakeFlags = [
+              "-DLOGOS_CORE_ROOT=${logosCore}"
+              "-DLOGOS_BLOCKCHAIN_LIB=${logosBlockchainC}/lib"
+              "-DLOGOS_BLOCKCHAIN_INCLUDE=${logosBlockchainC}/include"
+              "-DLOGOS_MODULE_BUNDLE=OFF"
+            ];
+        };
+        in
+        {
+          logos-blockchain-module = logosBlockchainModule;
+          default = logosBlockchainModule;
+        }
+      );
 
-            configurePhase = ''
-              runHook preConfigure
-              cmake -S . -B build -G Ninja \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DUNTITLED_USE_QT=ON \
-                -DLOGOS_CPP_SDK_ROOT="$LOGOS_CPP_SDK_ROOT" \
-                -DLOGOS_BLOCKCHAIN_ROOT="$LOGOS_BLOCKCHAIN_ROOT" \
-                -DCOPY_PLUGIN_TO_SOURCE_DIR=OFF
-              runHook postConfigure
-            '';
-
-            buildPhase = ''
-              runHook preBuild
-              cmake --build build --verbose
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out/lib $out/include
-              install -m755 build/libblockchainmodulelib.* $out/lib/
-              install -m644 ${./library.h} $out/include/library.h
-              runHook postInstall
-            '';
+      apps = forAll (
+        system:
+        let
+          pkgs = mkPkgs system;
+          logosBlockchainModule = self.packages.${system}.logos-blockchain-module;
+          logosModuleViewer = logos-module-viewer.packages.${system}.default;
+          extension =
+                if pkgs.stdenv.isDarwin then "dylib"
+                else if pkgs.stdenv.isWindows then "dll"
+                else "so";
+        in
+        {
+          default = {
+            type = "app";
+            program =
+              "${pkgs.writeShellScriptBin "inspect-module" ''
+                exec ${logosModuleViewer}/bin/logos-module-viewer \
+                  --module ${logosBlockchainModule}/lib/liblogos-blockchain-module.${extension}
+              ''}/bin/inspect-module";
           };
         }
       );
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosBlockchainSrc }:
+      devShells = forAll (
+        system:
         let
-          qt = pkgs.qt6;
-          llvmPkgs = pkgs.llvmPackages;
+          pkgs = mkPkgs system;
+          pkg = self.packages.${system}.default;
+          logosCore = logos-core.packages.${system}.default;
+          logosBlockchainC = logos-blockchain.packages.${system}.logos-blockchain-c;
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs = [
-              pkgs.cmake
-              pkgs.ninja
-              pkgs.pkg-config
-              pkgs.patchelf
-            ];
+            inputsFrom = [ pkg ];
 
-            buildInputs = [
-              qt.qtbase
-              qt.qttools
+            inherit (pkg)
+              LIBCLANG_PATH
+              CLANG_PATH;
 
-              pkgs.rustc
-              pkgs.cargo
-              pkgs.git
-
-              llvmPkgs.clang
-              llvmPkgs.llvm
-              llvmPkgs.libclang
-            ];
+            LOGOS_CORE_ROOT = "${logosCore}";
+            LOGOS_BLOCKCHAIN_LIB = "${logosBlockchainC}/lib";
+            LOGOS_BLOCKCHAIN_INCLUDE = "${logosBlockchainC}/include";
 
             shellHook = ''
-              export LOGOS_CPP_SDK_ROOT="${logosSdk}"
-              export LOGOS_BLOCKCHAIN_ROOT="${logosBlockchainSrc}"
+              BLUE='\e[1;34m'
+              GREEN='\e[1;32m'
+              RESET='\e[0m'
 
-              export LIBCLANG_PATH="${llvmPkgs.libclang.lib}/lib"
-              export CLANG_PATH="${llvmPkgs.clang}/bin/clang"
-
-              echo "Logos Blockchain Module dev environment"
-              echo "LOGOS_CPP_SDK_ROOT:    $LOGOS_CPP_SDK_ROOT"
-              echo "LOGOS_BLOCKCHAIN_ROOT: $LOGOS_BLOCKCHAIN_ROOT"
-              echo "LIBCLANG_PATH:         $LIBCLANG_PATH"
-              echo "CLANG_PATH:            $CLANG_PATH"
-              echo ""
-              echo "Build with:"
-              echo "  just clean"
-              echo "  just build"
+              echo -e "\n''${BLUE}=== Logos Blockchain Module Development Environment ===''${RESET}"
+              echo -e "''${GREEN}LOGOS_CORE_ROOT:''${RESET}       $LOGOS_CORE_ROOT"
+              echo -e "''${GREEN}LOGOS_BLOCKCHAIN_LIB:''${RESET}  $LOGOS_BLOCKCHAIN_LIB"
+              echo -e "''${GREEN}LOGOS_BLOCKCHAIN_INCLUDE:''${RESET} $LOGOS_BLOCKCHAIN_INCLUDE"
+              echo -e "''${BLUE}---------------------------------------------------------''${RESET}"
             '';
           };
         }

@@ -1,23 +1,22 @@
-#ifndef LOGOS_BLOCKCHAIN_MODULE_API_H
-#define LOGOS_BLOCKCHAIN_MODULE_API_H
+#ifndef I_LOGOS_BLOCKCHAIN_MODULE_API_H
+#define I_LOGOS_BLOCKCHAIN_MODULE_API_H
 
 #include <core/interface.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <lib_logos_blockchain.h>
+#include <logos_blockchain.h>
 #ifdef __cplusplus
 }
 #endif
 
-class LogosBlockchainModuleAPI : public QObject, public PluginInterface {
-    Q_OBJECT
+class ILogosBlockchainModule : public QObject, public PluginInterface {
     Q_INTERFACES(PluginInterface)
 
 public:
     using QObject::QObject;
-    ~LogosBlockchainModuleAPI() override = default;
+    ~ILogosBlockchainModule() override = default;
 
     // Logos Core
     Q_INVOKABLE virtual void initLogos(LogosAPI* logosAPIInstance) = 0;
@@ -33,7 +32,7 @@ public:
         void eventResponse(const QString& eventName, const QVariantList& data);
 };
 
-#define LogosBlockchainModuleInterface_iid "org.logos.blockchaininterface"
-Q_DECLARE_INTERFACE(LogosBlockchainModuleAPI, LogosBlockchainModuleInterface_iid)
+#define ILogosBlockchainModule_iid "org.logos.ilogosblockchainmodule"
+Q_DECLARE_INTERFACE(ILogosBlockchainModule, ILogosBlockchainModule_iid)
 
 #endif
