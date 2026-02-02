@@ -23,19 +23,39 @@ void LogosBlockchainModule::initLogos(LogosAPI* logosAPIInstance) {
     logosAPI = logosAPIInstance;
 }
 
-int LogosBlockchainModule::start(const QString& config_path) {
+int LogosBlockchainModule::start(const QString& config_path, const QString& deployment) {
     if (node) {
         qWarning() << "Could not execute the operation: The node is already running.";
         return 1;
     }
 
-    const QByteArray path = config_path.toUtf8();
-    const char* deployment = nullptr;
+    QString effective_config_path= config_path;
 
-    auto [value, error] = start_lb_node(path.constData(), deployment);
+    if (effective_config_path.isEmpty()) {
+        const char* env = std::getenv("LB_CONFIG_PATH");
+        if (env && *env) {
+            effective_config_path = QString::fromUtf8(env);
+            qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
+        } else {
+            qCritical() << "Config path was not specified and LB_CONFIG_PATH is not set.";
+            return 2;
+        }
+    }
+
+    qInfo() << "Starting the node with the configuration file:" << effective_config_path;
+    qInfo() << "Using deployment:" << (deployment.isEmpty() ? "<default>" : deployment);
+
+    const QByteArray config_path_buffer = effective_config_path.toUtf8();
+    const char* config_path_ptr = effective_config_path.isEmpty() ? nullptr : config_path_buffer.constData();
+
+    const QByteArray deployment_buffer = deployment.toUtf8();
+    const char* deployment_ptr = deployment.isEmpty() ? nullptr : deployment_buffer.constData();
+
+    auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
+    qInfo() << "Start node returned with value and error.";
     if (!is_ok(&error)) {
         qCritical() << "Failed to start the node. Error:" << error;
-        return 2;
+        return 3;
     }
 
     node = value;
