@@ -32,7 +32,8 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
     QString effective_config_path= config_path;
 
     if (effective_config_path.isEmpty()) {
-        if (const char* env = std::getenv("LB_CONFIG_PATH"); env && *env) {
+        const char* env = std::getenv("LB_CONFIG_PATH");
+        if (env && *env) {
             effective_config_path = QString::fromUtf8(env);
             qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
         } else {
