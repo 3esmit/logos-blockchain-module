@@ -190,6 +190,11 @@ storage:
 mempool:
   recovery_path: ./resources/recovery/mempool.json
 sdp:
+  declaration: null
+  wallet_config:
+    max_tx_fee: 18446744073709551615  # u64::MAX
+    # SDP funding public key - matches the genesis note pk used for SDP transaction fees
+    funding_pk: "89b7314f5184bae9eb7fa511098eb321b97b8fbbdec611dda591e0c01e18331d"
 wallet:
   known_keys:
     - "0000000000000000000000000000000000000000000000000000000000000000"
