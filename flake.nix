@@ -94,10 +94,9 @@
           pkgs = mkPkgs system;
           logosBlockchainModule = self.packages.${system}.logos-blockchain-module;
           logosModuleViewer = logos-module-viewer.packages.${system}.default;
-          extension =
-                if pkgs.stdenv.isDarwin then "dylib"
-                else if pkgs.stdenv.isWindows then "dll"
-                else "so";
+          extension = if pkgs.stdenv.isDarwin then "dylib"
+            else if pkgs.stdenv.hostPlatform.isWindows then "dll"
+            else "so";
         in
         {
           default = {
