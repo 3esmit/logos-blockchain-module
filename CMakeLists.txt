@@ -162,13 +162,12 @@ set_target_properties(${PLUGIN_TARGET} PROPERTIES
 )
 
 target_sources(${PLUGIN_TARGET} PRIVATE
-        src/logos_blockchain_module.cpp
-        src/logos_blockchain_module.h
-        metadata.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/logos_blockchain_module.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
 )
 
-set_target_properties(${PLUGIN_TARGET} PROPERTIES
-        PUBLIC_HEADER "src/i_logos_blockchain_module.h"
+set_property(TARGET ${PLUGIN_TARGET} PROPERTY PUBLIC_HEADER
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/i_logos_blockchain_module.h
 )
 
 target_include_directories(${PLUGIN_TARGET} PRIVATE
