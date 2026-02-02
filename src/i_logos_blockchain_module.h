@@ -11,25 +11,19 @@ extern "C" {
 }
 #endif
 
-class ILogosBlockchainModule : public QObject, public PluginInterface {
-    Q_INTERFACES(PluginInterface)
-
+class ILogosBlockchainModule {
 public:
-    using QObject::QObject;
-    ~ILogosBlockchainModule() override = default;
+    virtual ~ILogosBlockchainModule() = default;
 
     // Logos Core
-    Q_INVOKABLE virtual void initLogos(LogosAPI* logosAPIInstance) = 0;
+    virtual void initLogos(LogosAPI* logosAPIInstance) = 0;
 
     // Node
-    Q_INVOKABLE virtual int start(const QString& config_path) = 0;
-    Q_INVOKABLE virtual int stop() = 0;
-    Q_INVOKABLE virtual int subscribe() = 0;
-    Q_INVOKABLE virtual int wallet_get_balance(const uint8_t* wallet_address, const HeaderId* optional_tip, BalanceResult* output_balance) = 0;
-    Q_INVOKABLE virtual int wallet_transfer_funds(const TransferFundsArguments* transfer_funds_arguments, Hash* output_hash) = 0;
-
-    signals:
-        void eventResponse(const QString& eventName, const QVariantList& data);
+    virtual int start(const QString& config_path, const QString& deployment) = 0;
+    virtual int stop() = 0;
+    virtual int subscribe() = 0;
+    virtual int wallet_get_balance(const uint8_t* wallet_address, const HeaderId* optional_tip, BalanceResult* output_balance) = 0;
+    virtual int wallet_transfer_funds(const TransferFundsArguments* transfer_funds_arguments, Hash* output_hash) = 0;
 };
 
 #define ILogosBlockchainModule_iid "org.logos.ilogosblockchainmodule"
