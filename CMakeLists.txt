@@ -175,6 +175,10 @@ target_link_libraries(${PLUGIN_TARGET} PRIVATE
         logos_core
 )
 
+target_compile_definitions(${PLUGIN_TARGET} PRIVATE
+        LOGOS_BLOCKCHAIN_MODULE_METADATA_FILE="${CMAKE_CURRENT_SOURCE_DIR}/metadata.json"
+)
+
 add_dependencies(${PLUGIN_TARGET} logos_blockchain_libs)
 
 if(APPLE)
@@ -198,3 +202,4 @@ install(TARGETS ${PLUGIN_TARGET}
 )
 install(DIRECTORY "${LOGOS_BLOCKCHAIN_INCLUDE}/" DESTINATION include)
 install(FILES "${LOGOS_BLOCKCHAIN_DYLIB}" DESTINATION lib)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json" DESTINATION lib)
