@@ -78,7 +78,6 @@
               "-DLOGOS_CORE_ROOT=${logosCore}"
               "-DLOGOS_BLOCKCHAIN_LIB=${logosBlockchainC}/lib"
               "-DLOGOS_BLOCKCHAIN_INCLUDE=${logosBlockchainC}/include"
-              "-DLOGOS_MODULE_BUNDLE=OFF"
             ];
         };
         in

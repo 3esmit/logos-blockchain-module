@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---- Options ----
-option(LOGOS_MODULE_BUNDLE "Create local runtime bundle in target/." ON)
 set(LOGOS_CORE_ROOT "" CACHE PATH "Path to logos-core root directory.")
 set(LOGOS_BLOCKCHAIN_ROOT "" CACHE PATH "Path to logos-blockchain source root.")
 set(LOGOS_BLOCKCHAIN_LIB "" CACHE PATH "Path to prebuilt logos-blockchain lib.")
@@ -54,8 +53,7 @@ set(CMAKE_AUTORCC ON)
 
 # ---- Directories ----
 set(WORKSPACE_ROOT  "${CMAKE_BINARY_DIR}/workspace")
-set(TARGET_DIR      "${CMAKE_SOURCE_DIR}/target")
-file(MAKE_DIRECTORY "${WORKSPACE_ROOT}" "${TARGET_DIR}")
+file(MAKE_DIRECTORY "${WORKSPACE_ROOT}")
 
 # ---- Logos Core SDK ----
 set(SDK_LIB "${LOGOS_CORE_ROOT}/lib/liblogos_sdk.a")
@@ -156,11 +154,6 @@ set(PLUGIN_TARGET liblogos-blockchain-module)
 
 qt_add_plugin(${PLUGIN_TARGET} CLASS_NAME LogosBlockchainModule)
 
-set_target_properties(${PLUGIN_TARGET} PROPERTIES
-        OUTPUT_NAME "logos-blockchain-module"
-        LIBRARY_OUTPUT_DIRECTORY "${TARGET_DIR}"
-)
-
 target_sources(${PLUGIN_TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/logos_blockchain_module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
@@ -193,16 +186,6 @@ elseif(UNIX)
     set_target_properties(${PLUGIN_TARGET} PROPERTIES
             BUILD_RPATH "$ORIGIN"
             INSTALL_RPATH "$ORIGIN"
-    )
-endif()
-
-# ---- Optional local bundle ----
-if(LOGOS_MODULE_BUNDLE)
-    add_custom_command(TARGET ${PLUGIN_TARGET} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${LOGOS_BLOCKCHAIN_DYLIB}"
-            "${TARGET_DIR}/liblogos_blockchain${DYLIB_EXT}"
-            VERBATIM
     )
 endif()
 
