@@ -23,16 +23,15 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1769795993,
-        "narHash": "sha256-34W3vBr3Yk0PdRvA8pKciTY8TUX0AeHZ/hIWUxNI5XQ=",
+        "lastModified": 1770052482,
+        "narHash": "sha256-0xvLcZqKDfhhCu0w+GMWI57qUC3Hr1usRBfTWwT/i68=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain",
-        "rev": "ae3fb11f780645bc3fa76ece379e05c4b897d5a9",
+        "rev": "c8c63e5236093af856dfe355187d8e9fa31fd28d",
         "type": "github"
       },
       "original": {
         "owner": "logos-blockchain",
-        "ref": "ci/circuits/integrate-binaries-on-tests-using-nix",
         "repo": "logos-blockchain",
         "type": "github"
       }

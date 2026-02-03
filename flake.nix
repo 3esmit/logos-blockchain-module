@@ -7,7 +7,7 @@
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-core.url = "github:logos-co/logos-cpp-sdk";
 
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=ci/circuits/integrate-binaries-on-tests-using-nix";
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain";
 
     logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
