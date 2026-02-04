@@ -23,8 +23,8 @@ public:
     Q_INVOKABLE int wallet_get_balance(const uint8_t*, const HeaderId*, BalanceResult*) override;
     Q_INVOKABLE int wallet_transfer_funds(const TransferFundsArguments*, Hash*) override;
 
-    signals:
-        void eventResponse(const QString& eventName, const QVariantList& data);
+signals:
+    void eventResponse(const QString& eventName, const QVariantList& data);
 
 private:
     LogosBlockchainNode* node = nullptr;

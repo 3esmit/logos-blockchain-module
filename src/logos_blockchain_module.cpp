@@ -29,7 +29,7 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         return 1;
     }
 
-    QString effective_config_path= config_path;
+    QString effective_config_path = config_path;
 
     if (effective_config_path.isEmpty()) {
         const char* env = std::getenv("LB_CONFIG_PATH");
@@ -86,9 +86,7 @@ int LogosBlockchainModule::subscribe() {
         return 1;
     }
 
-    subscribe_to_new_blocks(node, [](const char* block) {
-        std::cout << "Received new block: " << block << std::endl;
-    });
+    subscribe_to_new_blocks(node, [](const char* block) { std::cout << "Received new block: " << block << std::endl; });
 
     return 0;
 }

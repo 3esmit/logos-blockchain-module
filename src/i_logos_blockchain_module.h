@@ -22,7 +22,11 @@ public:
     virtual int start(const QString& config_path, const QString& deployment) = 0;
     virtual int stop() = 0;
     virtual int subscribe() = 0;
-    virtual int wallet_get_balance(const uint8_t* wallet_address, const HeaderId* optional_tip, BalanceResult* output_balance) = 0;
+    virtual int wallet_get_balance(
+        const uint8_t* wallet_address,
+        const HeaderId* optional_tip,
+        BalanceResult* output_balance
+    ) = 0;
     virtual int wallet_transfer_funds(const TransferFundsArguments* transfer_funds_arguments, Hash* output_hash) = 0;
 };
 
