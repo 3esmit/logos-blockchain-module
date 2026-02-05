@@ -1,7 +1,11 @@
 #include "logos_blockchain_module.h"
 
 #include <QtCore/QDebug>
+#include <QtCore/QEvent>
+#include <QtCore/QCoreApplication>
 #include <iostream>
+#include <memory>
+
 
 LogosBlockchainModule::LogosBlockchainModule() = default;
 
@@ -86,7 +90,11 @@ int LogosBlockchainModule::subscribe() {
         return 1;
     }
 
-    subscribe_to_new_blocks(node, [](const char* block) { std::cout << "Received new block: " << block << std::endl; });
+    subscribe_to_new_blocks(node, [](const char* block) {
+        std::cout << "Received new block: " << block << std::endl;
+        auto* event = new BlockEvent(block);
+        QCoreApplication::postEvent(qApp, event);
+    });
 
     return 0;
 }
