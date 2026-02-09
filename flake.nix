@@ -82,7 +82,7 @@
         };
         in
         {
-          logos-blockchain-module = logosBlockchainModule;
+          lib = logosBlockchainModule;
           default = logosBlockchainModule;
         }
       );
@@ -91,21 +91,23 @@
         system:
         let
           pkgs = mkPkgs system;
-          logosBlockchainModule = self.packages.${system}.logos-blockchain-module;
+          logosBlockchainModuleLib = self.packages.${system}.lib;
           logosModuleViewer = logos-module-viewer.packages.${system}.default;
           extension = if pkgs.stdenv.isDarwin then "dylib"
             else if pkgs.stdenv.hostPlatform.isWindows then "dll"
             else "so";
-        in
-        {
-          default = {
+          inspectModule = {
             type = "app";
             program =
               "${pkgs.writeShellScriptBin "inspect-module" ''
                 exec ${logosModuleViewer}/bin/logos-module-viewer \
-                  --module ${logosBlockchainModule}/lib/libliblogos-blockchain-module.${extension}
+                  --module ${logosBlockchainModuleLib}/lib/liblogos-blockchain-module.${extension}
               ''}/bin/inspect-module";
           };
+        in
+        {
+          inspect-module = inspectModule;
+          default = inspectModule;
         }
       );
 

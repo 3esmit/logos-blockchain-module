@@ -150,13 +150,12 @@ add_library(logos_cpp_sdk INTERFACE)
 target_include_directories(logos_cpp_sdk INTERFACE "${SDK_INC}")
 
 # ---- Plugin ----
-set(PLUGIN_TARGET liblogos-blockchain-module)
+set(PLUGIN_TARGET logos-blockchain-module)
 
 qt_add_plugin(${PLUGIN_TARGET} CLASS_NAME LogosBlockchainModule)
 
 target_sources(${PLUGIN_TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/logos_blockchain_module.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
 )
 
 set_property(TARGET ${PLUGIN_TARGET} PROPERTY PUBLIC_HEADER
