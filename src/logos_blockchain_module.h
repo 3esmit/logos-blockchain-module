@@ -1,6 +1,24 @@
 #pragma once
-
+#include <QtCore/QDebug>
+#include <QtCore/QEvent>
+#include <QtCore/QCoreApplication>
+#include <iostream>
+#include <memory>
 #include "i_logos_blockchain_module.h"
+
+class BlockEvent : public QEvent {
+public:
+    static const QEvent::Type BlockEventType = static_cast<QEvent::Type>(QEvent::User + 111);
+    BlockEvent(const char* blockData) : QEvent(BlockEventType), block(blockData, &free_block) {}
+    ~BlockEvent() = default;
+
+    std::shared_ptr<const char> block;
+private:
+    static void free_block(const char* ptr) {
+		// SAFETY: Rust side expects a *mut char, so we can do the cast here.
+        if (ptr) free_cstring(const_cast<char*>(ptr));
+    }
+};
 
 class LogosBlockchainModule final : public QObject, public PluginInterface, public ILogosBlockchainModule {
     Q_OBJECT
@@ -19,7 +37,6 @@ public:
     // Logos Blockchain
     Q_INVOKABLE int start(const QString& config_path, const QString& deployment) override;
     Q_INVOKABLE int stop() override;
-    Q_INVOKABLE int subscribe() override;
     Q_INVOKABLE int wallet_get_balance(const uint8_t*, const HeaderId*, BalanceResult*) override;
     Q_INVOKABLE int wallet_transfer_funds(const TransferFundsArguments*, Hash*) override;
 

@@ -21,7 +21,6 @@ public:
     // Node
     virtual int start(const QString& config_path, const QString& deployment) = 0;
     virtual int stop() = 0;
-    virtual int subscribe() = 0;
     virtual int wallet_get_balance(
         const uint8_t* wallet_address,
         const HeaderId* optional_tip,

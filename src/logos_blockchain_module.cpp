@@ -1,8 +1,5 @@
 #include "logos_blockchain_module.h"
 
-#include <QtCore/QDebug>
-#include <iostream>
-
 LogosBlockchainModule::LogosBlockchainModule() = default;
 
 LogosBlockchainModule::~LogosBlockchainModule() {
@@ -60,6 +57,19 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
 
     node = value;
     qInfo() << "The node was started successfully.";
+
+    // Subscribe to block events
+    if (!node) {
+        qWarning() << "Could not subcribe to block events: The node is not running.";
+        return 1;
+    }
+
+    subscribe_to_new_blocks(node, [](const char* block) {
+        std::cout << "Received new block: " << block << std::endl;
+        auto* event = new BlockEvent(block);
+        QCoreApplication::postEvent(qApp, event);
+    });
+
     return 0;
 }
 
@@ -77,17 +87,6 @@ int LogosBlockchainModule::stop() {
     }
 
     node = nullptr;
-    return 0;
-}
-
-int LogosBlockchainModule::subscribe() {
-    if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
-    }
-
-    subscribe_to_new_blocks(node, [](const char* block) { std::cout << "Received new block: " << block << std::endl; });
-
     return 0;
 }
 
