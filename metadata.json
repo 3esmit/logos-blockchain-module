@@ -8,5 +8,13 @@
   "main": "LogosBlockchainModule",
   "dependencies": [],
   "capabilities": [],
-  "include": ["libnomos.dylib"]
+  "include": [
+    "liblogos_blockchain.dylib",
+    "liblogos_blockchain.so",
+    "liblogos_blockchain.dll",
+    "liblogos-blockchain-module.dylib",
+    "liblogos-blockchain-module.so",
+    "liblogos-blockchain-module.dll",
+    "circuits"
+  ]
 }
