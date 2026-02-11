@@ -1,8 +1,15 @@
 #include "logos_blockchain_module.h"
+#include "logos_api_client.h"
+#include <QVariant>
+
+// This is a static variable that is used to store the module instance.
+// It is used to access the module instance from subscribe_to_new_blocks callback.
+static LogosBlockchainModule* s_moduleForCallback = nullptr;
 
 LogosBlockchainModule::LogosBlockchainModule() = default;
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    s_moduleForCallback = nullptr;
     if (node) {
         stop();
     }
@@ -64,10 +71,18 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         return 1;
     }
 
+    s_moduleForCallback = this;
     subscribe_to_new_blocks(node, [](const char* block) {
         std::cout << "Received new block: " << block << std::endl;
-        auto* event = new BlockEvent(block);
-        QCoreApplication::postEvent(qApp, event);
+        if (!s_moduleForCallback) {
+            qCritical() << "s_moduleForCallback is nullptr cant forward the event.";
+            free_cstring(const_cast<char*>(block)); // Free Rust-allocated memory
+            return;
+        }
+        QVariantList data;
+        data.append(QString::fromUtf8(block));
+        s_moduleForCallback->emitEvent("newBlock", data);
+        free_cstring(const_cast<char*>(block));  // Free Rust-allocated memory
     });
 
     return 0;
@@ -127,4 +142,19 @@ int LogosBlockchainModule::wallet_transfer_funds(
 
     std::ranges::copy(value, *output_hash);
     return 0;
+}
+
+void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantList& data) {
+    if (!logosAPI) {
+        qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << eventName;
+        return;
+    }
+
+    LogosAPIClient* client = logosAPI->getClient("liblogos-blockchain-module");
+    if (!client) {
+        qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client for event" << eventName;
+        return;
+    }
+
+    client->onEventResponse(this, eventName, data);
 }
