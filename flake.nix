@@ -79,6 +79,10 @@
               "-DLOGOS_BLOCKCHAIN_LIB=${logosBlockchainC}/lib"
               "-DLOGOS_BLOCKCHAIN_INCLUDE=${logosBlockchainC}/include"
             ];
+
+            postInstall = ''
+              cp -r ${logosBlockchainC}/circuits $out/lib/
+            '';
         };
         in
         {
