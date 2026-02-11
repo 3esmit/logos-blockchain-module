@@ -26,8 +26,19 @@ public:
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 
+public:
+    // Public method for C callback to emit block events
+    void emitNewBlockEvent(const QVariantList& data);
+
 private:
     LogosBlockchainNode* node = nullptr;
+    LogosAPIClient* client = nullptr;
+
+    // Static instance for C callback (C API doesn't support user data)
+    static LogosBlockchainModule* s_instance;
+
+    // C-compatible callback function
+    static void onNewBlockCallback(const char* block);
 
     // Helper method for emitting events
     void emitEvent(const QString& eventName, const QVariantList& data);

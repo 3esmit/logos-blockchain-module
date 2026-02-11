@@ -2,14 +2,30 @@
 #include "logos_api_client.h"
 #include <QVariant>
 
-// This is a static variable that is used to store the module instance.
-// It is used to access the module instance from subscribe_to_new_blocks callback.
-static LogosBlockchainModule* s_moduleForCallback = nullptr;
+// Define static member
+LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
 
-LogosBlockchainModule::LogosBlockchainModule() = default;
+// Static callback implementation
+void LogosBlockchainModule::onNewBlockCallback(const char* block) {
+    if (s_instance) {
+        qInfo() << "Received new block: " << block;
+        QVariantList data;
+        data.append(QString::fromUtf8(block));
+        s_instance->emitNewBlockEvent(data);
+        free_cstring(const_cast<char*>(block));  // Free Rust-allocated memory
+    }
+}
+
+LogosBlockchainModule::LogosBlockchainModule() {
+    client = logosAPI->getClient("liblogos-blockchain-module");
+    node = nullptr;
+    if (!client) {
+        qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client for liblogos-blockchain-module";
+        return;
+    }
+}
 
 LogosBlockchainModule::~LogosBlockchainModule() {
-    s_moduleForCallback = nullptr;
     if (node) {
         stop();
     }
@@ -71,19 +87,8 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         return 1;
     }
 
-    s_moduleForCallback = this;
-    subscribe_to_new_blocks(node, [](const char* block) {
-        std::cout << "Received new block: " << block << std::endl;
-        if (!s_moduleForCallback) {
-            qCritical() << "s_moduleForCallback is nullptr cant forward the event.";
-            free_cstring(const_cast<char*>(block)); // Free Rust-allocated memory
-            return;
-        }
-        QVariantList data;
-        data.append(QString::fromUtf8(block));
-        s_moduleForCallback->emitEvent("newBlock", data);
-        free_cstring(const_cast<char*>(block));  // Free Rust-allocated memory
-    });
+    s_instance = this;
+    subscribe_to_new_blocks(node, onNewBlockCallback);
 
     return 0;
 }
@@ -93,6 +98,8 @@ int LogosBlockchainModule::stop() {
         qWarning() << "Could not execute the operation: The node is not running.";
         return 1;
     }
+
+    s_instance = nullptr;  // Clear before stopping to prevent callbacks during shutdown
 
     const OperationStatus status = stop_node(node);
     if (is_ok(&status)) {
@@ -149,12 +156,13 @@ void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantLi
         qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << eventName;
         return;
     }
-
-    LogosAPIClient* client = logosAPI->getClient("liblogos-blockchain-module");
     if (!client) {
         qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client for event" << eventName;
         return;
     }
-
     client->onEventResponse(this, eventName, data);
+}
+
+void LogosBlockchainModule::emitNewBlockEvent(const QVariantList& data) {
+    emitEvent("newBlock", data);
 }
