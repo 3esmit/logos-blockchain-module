@@ -52,6 +52,7 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
     // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable
     QString circuits_path = logosAPI->property("modulePath").toString().append(QString::fromUtf8("\\circuits"));
     qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
+    qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
     QString effective_config_path = config_path;
 
     if (effective_config_path.isEmpty()) {
