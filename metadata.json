@@ -1,5 +1,5 @@
 {
-  "name": "liblogos-blockchain-module",
+  "name": "liblogos_blockchain_module",
   "version": "1.0.0",
   "description": "Logos blockchain node for logos-core",
   "author": "Logos Blockchain Team",
@@ -12,9 +12,9 @@
     "liblogos_blockchain.dylib",
     "liblogos_blockchain.so",
     "liblogos_blockchain.dll",
-    "liblogos-blockchain-module.dylib",
-    "liblogos-blockchain-module.so",
-    "liblogos-blockchain-module.dll",
+    "liblogos_blockchain_module.dylib",
+    "liblogos_blockchain_module.so",
+    "liblogos_blockchain_module.dll",
     "circuits"
   ]
 }

@@ -27,7 +27,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 }
 
 QString LogosBlockchainModule::name() const {
-    return "liblogos-blockchain-module";
+    return "liblogos_blockchain_module";
 }
 
 QString LogosBlockchainModule::version() const {
@@ -37,9 +37,9 @@ QString LogosBlockchainModule::version() const {
 void LogosBlockchainModule::initLogos(LogosAPI* logosAPIInstance) {
     logosAPI = logosAPIInstance;
     if (logosAPI) {
-        client = logosAPI->getClient("liblogos-blockchain-module");
+        client = logosAPI->getClient("liblogos_blockchain_module");
         if (!client) {
-            qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client";
+            qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client";
         }
     }
 }
@@ -178,7 +178,7 @@ void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantLi
         return;
     }
     if (!client) {
-        qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client for event" << eventName;
+        qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client for event" << eventName;
         return;
     }
     client->onEventResponse(this, eventName, data);
