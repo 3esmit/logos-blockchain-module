@@ -16,12 +16,7 @@ void LogosBlockchainModule::onNewBlockCallback(const char* block) {
 }
 
 LogosBlockchainModule::LogosBlockchainModule() {
-    client = logosAPI->getClient("liblogos-blockchain-module");
     node = nullptr;
-    if (!client) {
-        qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client for liblogos-blockchain-module";
-        return;
-    }
 }
 
 LogosBlockchainModule::~LogosBlockchainModule() {
@@ -41,6 +36,12 @@ QString LogosBlockchainModule::version() const {
 
 void LogosBlockchainModule::initLogos(LogosAPI* logosAPIInstance) {
     logosAPI = logosAPIInstance;
+    if (logosAPI) {
+        client = logosAPI->getClient("liblogos-blockchain-module");
+        if (!client) {
+            qWarning() << "LogosBlockchainModule: Failed to get liblogos-blockchain-module client";
+        }
+    }
 }
 
 int LogosBlockchainModule::start(const QString& config_path, const QString& deployment) {
