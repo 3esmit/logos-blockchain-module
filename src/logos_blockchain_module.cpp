@@ -5,13 +5,12 @@
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
 
-// Static callback implementation
 void LogosBlockchainModule::onNewBlockCallback(const char* block) {
     if (s_instance) {
         qInfo() << "Received new block: " << block;
         QVariantList data;
         data.append(QString::fromUtf8(block));
-        s_instance->emitNewBlockEvent(data);
+        s_instance->emitEvent("newBlock", data);
         free_cstring(const_cast<char*>(block));  // Free Rust-allocated memory
     }
 }
@@ -26,6 +25,7 @@ LogosBlockchainModule::LogosBlockchainModule() {
 }
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    s_instance = nullptr;
     if (node) {
         stop();
     }
@@ -161,8 +161,4 @@ void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantLi
         return;
     }
     client->onEventResponse(this, eventName, data);
-}
-
-void LogosBlockchainModule::emitNewBlockEvent(const QVariantList& data) {
-    emitEvent("newBlock", data);
 }

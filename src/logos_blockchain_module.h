@@ -26,10 +26,6 @@ public:
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 
-public:
-    // Public method for C callback to emit block events
-    void emitNewBlockEvent(const QVariantList& data);
-
 private:
     LogosBlockchainNode* node = nullptr;
     LogosAPIClient* client = nullptr;
