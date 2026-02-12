@@ -1,0 +1,1223 @@
+network:
+  backend:
+    swarm:
+      host: 0.0.0.0
+      port: 3030
+      node_key: 31d19774087f763816dab42f3bcf56f8ff87a22392d7a966d21f6ef82b2d24f0
+      gossipsub_config:
+        history_length: 5
+        history_gossip: 3
+        mesh_n: 6
+        mesh_n_low: 5
+        mesh_n_high: 12
+        retain_scores: 4
+        gossip_lazy: 6
+        gossip_factor: 0.25
+        heartbeat_initial_delay:
+          secs: 5
+          nanos: 0
+        heartbeat_interval:
+          secs: 1
+          nanos: 0
+        fanout_ttl:
+          secs: 60
+          nanos: 0
+        check_explicit_peers_ticks: 300
+        duplicate_cache_time:
+          secs: 60
+          nanos: 0
+        validate_messages: false
+        allow_self_origin: false
+        do_px: false
+        prune_peers: 0
+        prune_backoff:
+          secs: 60
+          nanos: 0
+        unsubscribe_backoff:
+          secs: 10
+          nanos: 0
+        backoff_slack: 1
+        flood_publish: true
+        graft_flood_threshold:
+          secs: 10
+          nanos: 0
+        mesh_outbound_min: 2
+        opportunistic_graft_ticks: 60
+        opportunistic_graft_peers: 2
+        gossip_retransimission: 3
+        max_messages_per_rpc: null
+        max_ihave_length: 5000
+        max_ihave_messages: 10
+        iwant_followup_time:
+          secs: 3
+          nanos: 0
+        published_message_ids_cache_time:
+          secs: 10
+          nanos: 0
+      kademlia_config:
+        client_mode: false
+      identify_config: {}
+      chain_sync_config:
+        peer_response_timeout: 60000
+      nat_config:
+        type: static
+        external_address: /ip4/192.168.4.2/udp/3030/quic-v1
+    initial_peers:
+    - /ip4/209.38.241.182/udp/3001/quic-v1
+    - /ip4/209.38.241.182/udp/3000/quic-v1
+    - /ip4/209.38.241.182/udp/3002/quic-v1
+    - /ip4/209.38.241.182/udp/3003/quic-v1
+blend:
+  non_ephemeral_signing_key_id: 9424bf02be693618cbfce61c65e97cf2260900fe4771cb5c6055d41cb0af42f9
+  recovery_path_prefix: ./recovery/blend
+  core:
+    backend:
+      listening_address: /ip4/127.0.0.1/udp/4040/quic-v1
+      core_peering_degree:
+        start: 1
+        end: 3
+      edge_node_connection_timeout:
+        secs: 1
+        nanos: 0
+      max_edge_node_incoming_connections: 300
+      max_dial_attempts_per_peer: 3
+    zk:
+      secret_key_kms_id: 5083c2be2274ff307279f925096543bc7d1b280b72411581e5573f84d0c5a908
+  edge:
+    backend:
+      max_dial_attempts_per_peer_per_message: 1
+      replication_factor: 1
+cryptarchia:
+  service:
+    starting_state: !Genesis
+      genesis_tx:
+        mantle_tx:
+          ops:
+          - opcode: 0
+            payload:
+              channel_id: '0000000000000000000000000000000000000000000000000000000000000000'
+              inscription:
+              - 103
+              - 101
+              - 110
+              - 101
+              - 115
+              - 105
+              - 115
+              parent: '0000000000000000000000000000000000000000000000000000000000000000'
+              signer: '0000000000000000000000000000000000000000000000000000000000000000'
+          - opcode: 32
+            payload:
+              service_type: BN
+              locators:
+              - /ip4/209.38.241.182/udp/3401/quic-v1
+              provider_id: a1ee7c1a79aa778692f23de269d3f79fcf17a4a9b596d42675fd7bb386e72f09
+              zk_id: 18c166c25388a10c1a140e5f3505e433b9b2b7ffc8bb7c0e15c29f9b1aaf000a
+              locked_note_id: 415434a8b322674b3b3f87359dec08cfdea847d8031c331209bbcc223f77a30d
+          - opcode: 32
+            payload:
+              service_type: BN
+              locators:
+              - /ip4/209.38.241.182/udp/3400/quic-v1
+              provider_id: f10c55c16abbe8cc14ed1dec6b207ee6b72d6d73e9e057b3186300d98e8389b8
+              zk_id: 3638c8bc9f789e7a3a48efe7c3bcc73b23875ef5bac258eb1de6a0e83c8c912b
+              locked_note_id: 7357c9662bb22e0c2332397b160102f0fd3fc7fe16f68059e209bd0fc741bd1a
+          - opcode: 32
+            payload:
+              service_type: BN
+              locators:
+              - /ip4/209.38.241.182/udp/3402/quic-v1
+              provider_id: 77babe822e26b86db4faaa663f7af0e0547d37d7bf3cf1d560bdad5ac253a6e9
+              zk_id: 3451c240cf86b87cf49379881597c9c7c6cdf4175ee5f1eb9aeac7ec3f9f5c20
+              locked_note_id: f5bee288cac2f3c8e3e40be18fbb2a20cd62922686f11468c1028a9bb3dd970f
+          - opcode: 32
+            payload:
+              service_type: BN
+              locators:
+              - /ip4/209.38.241.182/udp/3403/quic-v1
+              provider_id: d271fabe545dcf5d4517b0f075796dd050af9748a081014d2d6d8336a1a65e21
+              zk_id: e93dc4ed6d8b2948d55329f06e956a3c734bc9aab62e7929912b559ea796772c
+              locked_note_id: 4f5998a8a73e35b0d7b00c974ee59e51e6fd0bcff198666e393747445cc49814
+          ledger_tx:
+            inputs: []
+            outputs:
+            - value: 100000
+              pk: ff18b4840f3edcfe8f515b73e8c7010843394f7ce477a8967c345d343b78fc10
+            - value: 1
+              pk: ca89fae0b7a4938f8fbbe158bc34782839075d4a4c702c1afec3a5ab792ae316
+            - value: 100
+              pk: b445cfa79339705b492e54fe83edb8099f1a897f4e6c3359b0ccc9c0602da803
+            - value: 100000
+              pk: eb2e544d83135d6fb98e0ba67eb7671f852ec7d896c6b23e3aa82e6c47869817
+            - value: 1
+              pk: ae8a896bd38cb9cf0a8129ca9a35426d339fbd6f3aae3d72b6c2ec381aa80707
+            - value: 100
+              pk: 4d29ca1decd2f38fd22e70a7ec86d53cbbf3aad725104fc9f52bc42834933d25
+            - value: 100000
+              pk: c32e27c47f551abb75f9f66ddba62066e52071cab16a7d1f94d6b080a1c9f72f
+            - value: 1
+              pk: 038ffd90180121cec93f19157f9ffbac8af6b268a7759e871c5fc9caf12f0c10
+            - value: 100
+              pk: 785e61951f75faa7c77f06680dff7cd0f6670964c8bbd73416cc5538abc72014
+            - value: 100000
+              pk: 31b773ffc42df5e0605ee61b47be3ce0f013f838c4b1ec3d530b8afc2ab47a13
+            - value: 1
+              pk: 4e5f34fcd02f8eaedbb2eddb16513f99315c932d0163c1981310e43f7ef3570f
+            - value: 100
+              pk: b80adcd64c3b8290468a1d67e8ab2f22bcc50f6f0182dda9b6ef51eb47913204
+          execution_gas_price: 0
+          storage_gas_price: 0
+        ops_proofs:
+        - NoProof
+        - !ZkAndEd25519Sigs
+          zk_sig:
+            pi_a:
+            - 172
+            - 161
+            - 196
+            - 135
+            - 195
+            - 83
+            - 54
+            - 62
+            - 172
+            - 95
+            - 186
+            - 110
+            - 107
+            - 42
+            - 87
+            - 82
+            - 154
+            - 112
+            - 235
+            - 171
+            - 145
+            - 238
+            - 190
+            - 144
+            - 62
+            - 117
+            - 85
+            - 134
+            - 79
+            - 124
+            - 225
+            - 140
+            pi_b:
+            - 239
+            - 129
+            - 47
+            - 123
+            - 199
+            - 1
+            - 166
+            - 85
+            - 51
+            - 138
+            - 134
+            - 240
+            - 212
+            - 137
+            - 96
+            - 61
+            - 89
+            - 228
+            - 14
+            - 196
+            - 225
+            - 81
+            - 248
+            - 204
+            - 100
+            - 180
+            - 232
+            - 249
+            - 197
+            - 240
+            - 132
+            - 33
+            - 211
+            - 156
+            - 173
+            - 6
+            - 65
+            - 14
+            - 18
+            - 24
+            - 81
+            - 13
+            - 28
+            - 103
+            - 8
+            - 61
+            - 213
+            - 123
+            - 205
+            - 252
+            - 199
+            - 212
+            - 142
+            - 18
+            - 146
+            - 116
+            - 244
+            - 10
+            - 88
+            - 139
+            - 123
+            - 15
+            - 215
+            - 143
+            pi_c:
+            - 33
+            - 244
+            - 7
+            - 122
+            - 209
+            - 37
+            - 111
+            - 146
+            - 16
+            - 204
+            - 108
+            - 76
+            - 226
+            - 74
+            - 208
+            - 121
+            - 27
+            - 8
+            - 153
+            - 248
+            - 159
+            - 18
+            - 217
+            - 20
+            - 165
+            - 21
+            - 162
+            - 36
+            - 109
+            - 44
+            - 91
+            - 28
+          ed25519_sig:
+          - 94
+          - 216
+          - 72
+          - 8
+          - 89
+          - 50
+          - 144
+          - 62
+          - 239
+          - 25
+          - 242
+          - 90
+          - 70
+          - 52
+          - 252
+          - 179
+          - 243
+          - 169
+          - 4
+          - 19
+          - 235
+          - 70
+          - 161
+          - 169
+          - 42
+          - 119
+          - 120
+          - 85
+          - 212
+          - 236
+          - 101
+          - 100
+          - 154
+          - 199
+          - 59
+          - 10
+          - 165
+          - 197
+          - 136
+          - 35
+          - 25
+          - 186
+          - 68
+          - 223
+          - 18
+          - 202
+          - 228
+          - 108
+          - 124
+          - 77
+          - 74
+          - 54
+          - 104
+          - 182
+          - 83
+          - 77
+          - 13
+          - 192
+          - 173
+          - 24
+          - 111
+          - 56
+          - 138
+          - 2
+        - !ZkAndEd25519Sigs
+          zk_sig:
+            pi_a:
+            - 45
+            - 160
+            - 163
+            - 231
+            - 84
+            - 190
+            - 27
+            - 71
+            - 146
+            - 104
+            - 221
+            - 184
+            - 72
+            - 124
+            - 31
+            - 157
+            - 121
+            - 122
+            - 91
+            - 138
+            - 86
+            - 203
+            - 59
+            - 68
+            - 18
+            - 163
+            - 221
+            - 19
+            - 239
+            - 108
+            - 90
+            - 156
+            pi_b:
+            - 36
+            - 209
+            - 232
+            - 178
+            - 170
+            - 74
+            - 186
+            - 171
+            - 14
+            - 192
+            - 43
+            - 111
+            - 175
+            - 198
+            - 33
+            - 118
+            - 47
+            - 152
+            - 134
+            - 100
+            - 251
+            - 232
+            - 242
+            - 42
+            - 183
+            - 60
+            - 160
+            - 68
+            - 161
+            - 220
+            - 92
+            - 11
+            - 220
+            - 250
+            - 175
+            - 60
+            - 174
+            - 109
+            - 75
+            - 159
+            - 12
+            - 114
+            - 104
+            - 44
+            - 242
+            - 224
+            - 77
+            - 44
+            - 149
+            - 253
+            - 211
+            - 249
+            - 44
+            - 55
+            - 86
+            - 124
+            - 132
+            - 23
+            - 136
+            - 108
+            - 106
+            - 76
+            - 40
+            - 139
+            pi_c:
+            - 63
+            - 191
+            - 16
+            - 44
+            - 110
+            - 157
+            - 139
+            - 243
+            - 205
+            - 5
+            - 119
+            - 49
+            - 251
+            - 188
+            - 81
+            - 225
+            - 222
+            - 115
+            - 157
+            - 213
+            - 30
+            - 34
+            - 46
+            - 183
+            - 78
+            - 52
+            - 77
+            - 138
+            - 5
+            - 150
+            - 194
+            - 11
+          ed25519_sig:
+          - 250
+          - 236
+          - 56
+          - 146
+          - 150
+          - 165
+          - 30
+          - 38
+          - 227
+          - 242
+          - 80
+          - 99
+          - 225
+          - 78
+          - 122
+          - 173
+          - 252
+          - 193
+          - 243
+          - 234
+          - 150
+          - 241
+          - 195
+          - 215
+          - 127
+          - 98
+          - 47
+          - 17
+          - 142
+          - 217
+          - 63
+          - 126
+          - 97
+          - 91
+          - 246
+          - 164
+          - 124
+          - 144
+          - 91
+          - 5
+          - 230
+          - 62
+          - 135
+          - 25
+          - 255
+          - 31
+          - 7
+          - 168
+          - 238
+          - 123
+          - 137
+          - 140
+          - 232
+          - 238
+          - 204
+          - 182
+          - 74
+          - 79
+          - 155
+          - 134
+          - 86
+          - 24
+          - 232
+          - 9
+        - !ZkAndEd25519Sigs
+          zk_sig:
+            pi_a:
+            - 93
+            - 36
+            - 30
+            - 153
+            - 179
+            - 136
+            - 89
+            - 205
+            - 105
+            - 229
+            - 219
+            - 135
+            - 190
+            - 82
+            - 204
+            - 121
+            - 240
+            - 224
+            - 205
+            - 183
+            - 5
+            - 99
+            - 181
+            - 30
+            - 193
+            - 65
+            - 241
+            - 175
+            - 214
+            - 237
+            - 232
+            - 169
+            pi_b:
+            - 7
+            - 202
+            - 209
+            - 73
+            - 15
+            - 25
+            - 139
+            - 225
+            - 18
+            - 170
+            - 56
+            - 84
+            - 68
+            - 96
+            - 56
+            - 164
+            - 114
+            - 187
+            - 6
+            - 134
+            - 35
+            - 167
+            - 211
+            - 250
+            - 247
+            - 250
+            - 46
+            - 157
+            - 135
+            - 96
+            - 33
+            - 5
+            - 222
+            - 232
+            - 194
+            - 128
+            - 254
+            - 245
+            - 232
+            - 88
+            - 222
+            - 140
+            - 194
+            - 2
+            - 148
+            - 159
+            - 180
+            - 107
+            - 15
+            - 172
+            - 52
+            - 98
+            - 127
+            - 101
+            - 173
+            - 40
+            - 18
+            - 114
+            - 5
+            - 219
+            - 228
+            - 107
+            - 144
+            - 15
+            pi_c:
+            - 66
+            - 188
+            - 180
+            - 131
+            - 120
+            - 31
+            - 247
+            - 122
+            - 232
+            - 94
+            - 228
+            - 98
+            - 246
+            - 106
+            - 109
+            - 22
+            - 121
+            - 109
+            - 8
+            - 40
+            - 56
+            - 74
+            - 161
+            - 104
+            - 80
+            - 145
+            - 215
+            - 169
+            - 79
+            - 245
+            - 37
+            - 23
+          ed25519_sig:
+          - 255
+          - 163
+          - 252
+          - 35
+          - 126
+          - 22
+          - 251
+          - 84
+          - 62
+          - 251
+          - 105
+          - 107
+          - 206
+          - 24
+          - 13
+          - 120
+          - 135
+          - 130
+          - 8
+          - 44
+          - 22
+          - 139
+          - 205
+          - 13
+          - 43
+          - 142
+          - 3
+          - 64
+          - 38
+          - 90
+          - 185
+          - 94
+          - 52
+          - 94
+          - 217
+          - 233
+          - 215
+          - 85
+          - 1
+          - 101
+          - 23
+          - 164
+          - 60
+          - 208
+          - 238
+          - 151
+          - 65
+          - 217
+          - 124
+          - 92
+          - 54
+          - 151
+          - 244
+          - 245
+          - 153
+          - 213
+          - 58
+          - 178
+          - 40
+          - 20
+          - 126
+          - 4
+          - 84
+          - 7
+        - !ZkAndEd25519Sigs
+          zk_sig:
+            pi_a:
+            - 81
+            - 65
+            - 151
+            - 194
+            - 177
+            - 0
+            - 142
+            - 75
+            - 160
+            - 117
+            - 16
+            - 228
+            - 193
+            - 89
+            - 82
+            - 222
+            - 182
+            - 22
+            - 121
+            - 37
+            - 72
+            - 132
+            - 231
+            - 181
+            - 42
+            - 35
+            - 29
+            - 131
+            - 250
+            - 43
+            - 88
+            - 27
+            pi_b:
+            - 41
+            - 71
+            - 16
+            - 6
+            - 237
+            - 194
+            - 222
+            - 128
+            - 233
+            - 86
+            - 35
+            - 2
+            - 184
+            - 218
+            - 249
+            - 247
+            - 86
+            - 99
+            - 236
+            - 62
+            - 90
+            - 165
+            - 28
+            - 146
+            - 46
+            - 5
+            - 3
+            - 180
+            - 81
+            - 143
+            - 185
+            - 29
+            - 145
+            - 232
+            - 124
+            - 213
+            - 242
+            - 38
+            - 8
+            - 35
+            - 191
+            - 129
+            - 31
+            - 156
+            - 162
+            - 197
+            - 91
+            - 22
+            - 123
+            - 2
+            - 224
+            - 100
+            - 164
+            - 108
+            - 122
+            - 58
+            - 237
+            - 124
+            - 34
+            - 58
+            - 174
+            - 18
+            - 66
+            - 36
+            pi_c:
+            - 113
+            - 38
+            - 134
+            - 193
+            - 59
+            - 62
+            - 254
+            - 72
+            - 224
+            - 106
+            - 41
+            - 158
+            - 104
+            - 3
+            - 123
+            - 251
+            - 38
+            - 30
+            - 228
+            - 174
+            - 134
+            - 144
+            - 218
+            - 125
+            - 48
+            - 232
+            - 72
+            - 32
+            - 10
+            - 142
+            - 81
+            - 175
+          ed25519_sig:
+          - 188
+          - 101
+          - 147
+          - 122
+          - 4
+          - 47
+          - 79
+          - 123
+          - 65
+          - 36
+          - 0
+          - 20
+          - 49
+          - 166
+          - 85
+          - 88
+          - 6
+          - 18
+          - 247
+          - 145
+          - 132
+          - 98
+          - 88
+          - 209
+          - 211
+          - 234
+          - 10
+          - 17
+          - 217
+          - 255
+          - 85
+          - 137
+          - 175
+          - 12
+          - 146
+          - 225
+          - 59
+          - 218
+          - 62
+          - 213
+          - 166
+          - 5
+          - 149
+          - 35
+          - 228
+          - 169
+          - 37
+          - 220
+          - 133
+          - 46
+          - 56
+          - 178
+          - 130
+          - 176
+          - 159
+          - 242
+          - 145
+          - 247
+          - 136
+          - 34
+          - 174
+          - 192
+          - 138
+          - 1
+        ledger_tx_proof:
+          pi_a:
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          pi_b:
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          pi_c:
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+          - 0
+    recovery_file: ./recovery/cryptarchia.json
+    bootstrap:
+      prolonged_bootstrap_period: '1.000000000'
+      force_bootstrap: false
+      offline_grace_period:
+        grace_period: '1200.000000000'
+        state_recording_interval: '60.000000000'
+  network:
+    bootstrap:
+      ibd:
+        peers: []
+        delay_before_new_download:
+          secs: 10
+          nanos: 0
+    sync:
+      orphan:
+        max_orphan_cache_size: 5
+  leader:
+    wallet:
+      max_tx_fee: 18446744073709551615
+      funding_pk: c3c8d68cfce91f55323133c82ce3b7f6d5b45270e8ab46e4bdef337b1265292a
+time:
+  backend:
+    ntp_server: pool.ntp.org:123
+    ntp_client_settings:
+      timeout: '5.000000000'
+      listening_interface: 0.0.0.0
+    update_interval: '16.000000000'
+  chain_start_time: 2026-02-06 15:08:50.883539361 +00:00:00
+mempool:
+  recovery_path: ./recovery/mempool.json
+tracing:
+  logger: !Stdout
+  tracing: None
+  filter: None
+  metrics: None
+  console: None
+  level: DEBUG
+sdp:
+  declaration: null
+  wallet_config:
+    max_tx_fee: 18446744073709551615
+    funding_pk: c3c8d68cfce91f55323133c82ce3b7f6d5b45270e8ab46e4bdef337b1265292a
+http:
+  backend_settings:
+    address: 0.0.0.0:8080
+    cors_origins: []
+    timeout:
+      secs: 30
+      nanos: 0
+    max_body_size: 10485760
+    max_concurrent_requests: 1000
+storage:
+  db_path: ./db
+  read_only: false
+  column_family: blocks
+key_management:
+  keys:
+    9424bf02be693618cbfce61c65e97cf2260900fe4771cb5c6055d41cb0af42f9: !Ed25519 31d19774087f763816dab42f3bcf56f8ff87a22392d7a966d21f6ef82b2d24f0
+    5198136db35def5804238ae2c3f947f2fbb500d15b386b8c65f39b14b39b1a10: !Zk 6c6431d19774087f763816dab42f3bcf00000000000000000000000000000000
+    c3c8d68cfce91f55323133c82ce3b7f6d5b45270e8ab46e4bdef337b1265292a: !Zk 73647031d19774087f763816dab42f3b00000000000000000000000000000000
+    5083c2be2274ff307279f925096543bc7d1b280b72411581e5573f84d0c5a908: !Zk 8f24bf52da9dccc4f4c947bcfa5f7929554f7976b7143ac38f34dcb671274d07
+wallet:
+  known_keys:
+    5198136db35def5804238ae2c3f947f2fbb500d15b386b8c65f39b14b39b1a10: 5198136db35def5804238ae2c3f947f2fbb500d15b386b8c65f39b14b39b1a10
+    c3c8d68cfce91f55323133c82ce3b7f6d5b45270e8ab46e4bdef337b1265292a: c3c8d68cfce91f55323133c82ce3b7f6d5b45270e8ab46e4bdef337b1265292a
+  voucher_master_key_id: 5198136db35def5804238ae2c3f947f2fbb500d15b386b8c65f39b14b39b1a10
+  recovery_path: ./recovery/wallet.json
+testing_http:
+  backend_settings:
+    address: 127.0.0.1:39825
+    cors_origins: []
+    timeout:
+      secs: 30
+      nanos: 0
+    max_body_size: 10485760
+    max_concurrent_requests: 1000
+deployment:
+  blend:
+    common:
+      num_blend_layers: 3
+      timing:
+        rounds_per_session: 2000
+        rounds_per_interval: 10
+        round_duration: '1.000000000'
+        rounds_per_observation_window: 20
+        rounds_per_session_transition_period: 20
+        epoch_transition_period_in_slots: 20
+      minimum_network_size: 32
+      protocol_name: /logos-blockchain-devnet/blend/1.0.0
+      data_replication_factor: 0
+    core:
+      scheduler:
+        cover:
+          message_frequency_per_round: 1.0
+          intervals_for_safety_buffer: 100
+        delayer:
+          maximum_release_delay_in_rounds: 3
+      minimum_messages_coefficient: 1
+      normalization_constant: 1.03
+      activity_threshold_sensitivity: 1
+  network:
+    kademlia_protocol_name: /logos-blockchain-devnet/kad/1.0.0
+    identify_protocol_name: /logos-blockchain-devnet/identify/1.0.0
+    chain_sync_protocol_name: /logos-blockchain-devnet/chainsync/1.0.0
+  cryptarchia:
+    epoch_config:
+      epoch_stake_distribution_stabilization: 3
+      epoch_period_nonce_buffer: 3
+      epoch_period_nonce_stabilization: 4
+    security_param: 20
+    sdp_config:
+      service_params:
+        BN:
+          lock_period: 10
+          inactivity_period: 20
+          retention_period: 100
+          timestamp: 0
+      min_stake:
+        threshold: 1
+        timestamp: 0
+    gossipsub_protocol: /logos-blockchain-devnet/cryptarchia/1.0.0
+  time:
+    slot_duration:
+      secs: 1
+      nanos: 0
+  mempool:
+    pubsub_topic: /logos-blockchain-devnet/mempool/1.0.0

@@ -1,24 +1,7 @@
 #pragma once
 #include <QtCore/QDebug>
-#include <QtCore/QEvent>
-#include <QtCore/QCoreApplication>
 #include <iostream>
-#include <memory>
 #include "i_logos_blockchain_module.h"
-
-class BlockEvent : public QEvent {
-public:
-    static const QEvent::Type BlockEventType = static_cast<QEvent::Type>(QEvent::User + 111);
-    BlockEvent(const char* blockData) : QEvent(BlockEventType), block(blockData, &free_block) {}
-    ~BlockEvent() = default;
-
-    std::shared_ptr<const char> block;
-private:
-    static void free_block(const char* ptr) {
-		// SAFETY: Rust side expects a *mut char, so we can do the cast here.
-        if (ptr) free_cstring(const_cast<char*>(ptr));
-    }
-};
 
 class LogosBlockchainModule final : public QObject, public PluginInterface, public ILogosBlockchainModule {
     Q_OBJECT
@@ -45,4 +28,14 @@ signals:
 
 private:
     LogosBlockchainNode* node = nullptr;
+    LogosAPIClient* client = nullptr;
+
+    // Static instance for C callback (C API doesn't support user data)
+    static LogosBlockchainModule* s_instance;
+
+    // C-compatible callback function
+    static void onNewBlockCallback(const char* block);
+
+    // Helper method for emitting events
+    void emitEvent(const QString& eventName, const QVariantList& data);
 };
