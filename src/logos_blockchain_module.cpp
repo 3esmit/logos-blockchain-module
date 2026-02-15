@@ -156,6 +156,22 @@ int LogosBlockchainModule::wallet_transfer_funds(
     return 0;
 }
 
+int LogosBlockchainModule::wallet_get_known_addresses(lb::KnownAddresses* output) {
+    if (!node) {
+        qWarning() << "Could not execute the operation: The node is not running.";
+        return 1;
+    }
+
+    auto [value, error] = get_known_addresses(node);
+    if (!is_ok(&error)) {
+        qCritical() << "Failed to get known addresses. Error:" << error;
+        return 1;
+    }
+
+    *output = lb::KnownAddresses(value);
+    return 0;
+}
+
 void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantList& data) {
     if (!logosAPI) {
         qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << eventName;

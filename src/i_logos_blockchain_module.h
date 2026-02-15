@@ -2,14 +2,7 @@
 #define I_LOGOS_BLOCKCHAIN_MODULE_API_H
 
 #include <core/interface.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include <logos_blockchain.h>
-#ifdef __cplusplus
-}
-#endif
+#include "known_addresses.h"
 
 class ILogosBlockchainModule {
 public:
@@ -27,6 +20,7 @@ public:
         BalanceResult* output_balance
     ) = 0;
     virtual int wallet_transfer_funds(const TransferFundsArguments* transfer_funds_arguments, Hash* output_hash) = 0;
+    virtual int wallet_get_known_addresses(lb::KnownAddresses* output) = 0;
 };
 
 #define ILogosBlockchainModule_iid "org.logos.ilogosblockchainmodule"

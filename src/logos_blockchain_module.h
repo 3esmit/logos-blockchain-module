@@ -22,6 +22,7 @@ public:
     Q_INVOKABLE int stop() override;
     Q_INVOKABLE int wallet_get_balance(const uint8_t*, const HeaderId*, BalanceResult*) override;
     Q_INVOKABLE int wallet_transfer_funds(const TransferFundsArguments*, Hash*) override;
+    Q_INVOKABLE int wallet_get_known_addresses(lb::KnownAddresses*) override;
 
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
