@@ -160,7 +160,6 @@ target_sources(${PLUGIN_TARGET} PRIVATE
 
 set_property(TARGET ${PLUGIN_TARGET} PROPERTY PUBLIC_HEADER
         ${CMAKE_CURRENT_SOURCE_DIR}/src/i_logos_blockchain_module.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/known_addresses.h
 )
 
 target_include_directories(${PLUGIN_TARGET} PRIVATE
