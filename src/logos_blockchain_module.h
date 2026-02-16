@@ -1,7 +1,7 @@
 #pragma once
+#include "i_logos_blockchain_module.h"
 #include <QtCore/QDebug>
 #include <iostream>
-#include "i_logos_blockchain_module.h"
 
 class LogosBlockchainModule final : public QObject, public PluginInterface, public ILogosBlockchainModule {
     Q_OBJECT

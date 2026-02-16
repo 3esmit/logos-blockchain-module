@@ -1,8 +1,8 @@
 #ifndef I_LOGOS_BLOCKCHAIN_MODULE_API_H
 #define I_LOGOS_BLOCKCHAIN_MODULE_API_H
 
-#include <core/interface.h>
 #include "known_addresses.h"
+#include <core/interface.h>
 
 class ILogosBlockchainModule {
 public:

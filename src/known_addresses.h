@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <cstdint>
 #include <cstddef>
 
 #ifdef __cplusplus
@@ -26,15 +25,15 @@ public:
             }
         }) {}
 
-    size_t size() const {
+    [[nodiscard]] size_t size() const {
         return data_ ? data_->len : 0;
     }
 
-    bool empty() const {
+    [[nodiscard]] bool empty() const {
         return size() == 0;
     }
 
-    const uint8_t* at(size_t index) const {
+    [[nodiscard]] const uint8_t* at(size_t index) const {
         if (!data_ || index >= data_->len) {
             return nullptr;
         }
@@ -45,7 +44,7 @@ public:
         return at(index);
     }
 
-    bool valid() const {
+    [[nodiscard]] bool valid() const {
         return data_ != nullptr;
     }
 

@@ -11,7 +11,7 @@ void LogosBlockchainModule::onNewBlockCallback(const char* block) {
         QVariantList data;
         data.append(QString::fromUtf8(block));
         s_instance->emitEvent("newBlock", data);
-        free_cstring(const_cast<char*>(block));  // Free Rust-allocated memory
+        free_cstring(const_cast<char*>(block)); // Free Rust-allocated memory
     }
 }
 
@@ -104,7 +104,7 @@ int LogosBlockchainModule::stop() {
         return 1;
     }
 
-    s_instance = nullptr;  // Clear before stopping to prevent callbacks during shutdown
+    s_instance = nullptr; // Clear before stopping to prevent callbacks during shutdown
 
     const OperationStatus status = stop_node(node);
     if (is_ok(&status)) {
