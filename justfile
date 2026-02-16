@@ -7,7 +7,7 @@ configure:
       ${LOGOS_BLOCKCHAIN_INCLUDE:+-DLOGOS_BLOCKCHAIN_INCLUDE="$LOGOS_BLOCKCHAIN_INCLUDE"}
 
 build: configure
-    cmake --build build --parallel --target liblogos-blockchain-module
+    cmake --build build --parallel --target logos-blockchain-module
 
 clean:
     rm -rf build target
@@ -16,6 +16,9 @@ rebuild: clean configure build
 
 nix:
     nix develop
+
+prettify:
+    nix shell nixpkgs#clang-tools -c clang-format -i src/**.cpp src/**.h
 
 unicode-logs file:
     perl -pe 's/\\u([0-9A-Fa-f]{4})/chr(hex($1))/ge' {{file}} | less -R
