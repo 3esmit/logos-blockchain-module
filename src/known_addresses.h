@@ -1,7 +1,7 @@
 #pragma once
 
-#include <memory>
 #include <cstddef>
+#include <memory>
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,47 +13,47 @@ extern "C" {
 
 namespace lb {
 
-class KnownAddresses {
-public:
-    KnownAddresses() : data_(nullptr) {}
+    class KnownAddresses {
+    public:
+        KnownAddresses() : data_(nullptr) {}
 
-    explicit KnownAddresses(::KnownAddresses addresses)
-        : data_(new ::KnownAddresses(addresses), [](::KnownAddresses* ptr) {
-            if (ptr) {
-                free_known_addresses(*ptr);
-                delete ptr;
-            }
-        }) {}
+        explicit KnownAddresses(::KnownAddresses addresses)
+            : data_(new ::KnownAddresses(addresses), [](::KnownAddresses* ptr) {
+                  if (ptr) {
+                      free_known_addresses(*ptr);
+                      delete ptr;
+                  }
+              }) {}
 
-    [[nodiscard]] size_t size() const {
-        return data_ ? data_->len : 0;
-    }
-
-    [[nodiscard]] bool empty() const {
-        return size() == 0;
-    }
-
-    [[nodiscard]] const uint8_t* at(size_t index) const {
-        if (!data_ || index >= data_->len) {
-            return nullptr;
+        [[nodiscard]] size_t size() const {
+            return data_ ? data_->len : 0;
         }
-        return data_->addresses[index];
-    }
 
-    const uint8_t* operator[](size_t index) const {
-        return at(index);
-    }
+        [[nodiscard]] bool empty() const {
+            return size() == 0;
+        }
 
-    [[nodiscard]] bool valid() const {
-        return data_ != nullptr;
-    }
+        [[nodiscard]] const uint8_t* at(size_t index) const {
+            if (!data_ || index >= data_->len) {
+                return nullptr;
+            }
+            return data_->addresses[index];
+        }
 
-    explicit operator bool() const {
-        return valid();
-    }
+        const uint8_t* operator[](size_t index) const {
+            return at(index);
+        }
 
-private:
-    std::shared_ptr<::KnownAddresses> data_;
-};
+        [[nodiscard]] bool valid() const {
+            return data_ != nullptr;
+        }
 
-} // namespace lb
+        explicit operator bool() const {
+            return valid();
+        }
+
+    private:
+        std::shared_ptr<::KnownAddresses> data_;
+    };
+
+}
