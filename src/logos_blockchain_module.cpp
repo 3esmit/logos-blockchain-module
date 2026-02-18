@@ -1,9 +1,29 @@
 #include "logos_blockchain_module.h"
 #include "logos_api_client.h"
+#include <QByteArray>
 #include <QVariant>
 
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
+
+namespace {
+    // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
+    constexpr int kAddressBytes = static_cast<int>(sizeof(Hash));
+    constexpr int kAddressHexLen = kAddressBytes * 2;
+
+    // Parses kAddressHexLen hex chars (optional 0x prefix) to kAddressBytes. Returns empty QByteArray on error.
+    QByteArray parseAddressHex(const QString& addressHex) {
+        QString hex = addressHex.trimmed();
+        if (hex.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
+            hex = hex.mid(2);
+        if (hex.length() != kAddressHexLen)
+            return {};
+        QByteArray bytes = QByteArray::fromHex(hex.toUtf8());
+        if (bytes.size() != kAddressBytes)
+            return {};
+        return bytes;
+    }
+}
 
 void LogosBlockchainModule::onNewBlockCallback(const char* block) {
     if (s_instance) {
@@ -11,7 +31,9 @@ void LogosBlockchainModule::onNewBlockCallback(const char* block) {
         QVariantList data;
         data.append(QString::fromUtf8(block));
         s_instance->emitEvent("newBlock", data);
-        free_cstring(const_cast<char*>(block)); // Free Rust-allocated memory
+        // SAFETY:
+        // We are getting an owned pointer here which is freed after this callback is called, so there is not need to
+        // free the resrouce here as we are copying the data!
     }
 }
 
@@ -117,59 +139,126 @@ int LogosBlockchainModule::stop() {
     return 0;
 }
 
-int LogosBlockchainModule::wallet_get_balance(
-    const uint8_t* wallet_address,
-    const HeaderId* optional_tip,
-    BalanceResult* output_balance
-) {
+QString LogosBlockchainModule::wallet_get_balance(const QString& addressHex) {
+    qDebug() << "wallet_get_balance: addressHex=" << addressHex;
     if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
+        return QStringLiteral("Error: The node is not running.");
     }
 
-    auto [value, error] = get_balance(node, wallet_address, optional_tip);
+    QByteArray bytes = parseAddressHex(addressHex);
+    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
+        return QStringLiteral("Error: Address must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = get_balance(node, 
+        reinterpret_cast<const uint8_t*>(bytes.constData()), nullptr);
     if (!is_ok(&error)) {
-        qCritical() << "Failed to get balance. Error:" << error;
-        return 1;
+        return QStringLiteral("Error: Failed to get balance: ") + QString::number(error);
     }
-
-    output_balance->value = value;
-    return 0;
+    
+    return QString::number(value);
 }
 
-int LogosBlockchainModule::wallet_transfer_funds(
-    const TransferFundsArguments* transfer_funds_arguments,
-    Hash* output_hash
+QString LogosBlockchainModule::wallet_transfer_funds(
+    const QString& changePublicKey,
+    const QStringList& senderAddresses,
+    const QString& recipientAddress,
+    const QString& amount,
+    const QString& optionalTipHex
 ) {
     if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
+        return QStringLiteral("Error: The node is not running.");
     }
 
-    auto [value, error] = transfer_funds(node, transfer_funds_arguments);
+    bool ok = false;
+    const quint64 amountVal = amount.trimmed().toULongLong(&ok);
+    if (!ok) {
+        return QStringLiteral("Error: Invalid amount (positive integer required).");
+    }
+
+    QByteArray changeBytes = parseAddressHex(changePublicKey);
+    if (changeBytes.isEmpty() || changeBytes.size() != kAddressBytes) {
+        return QStringLiteral("Error: Invalid changePublicKey (64 hex characters required).");
+    }
+    QByteArray recipientBytes = parseAddressHex(recipientAddress);
+    if (recipientBytes.isEmpty() || recipientBytes.size() != kAddressBytes) {
+        return QStringLiteral("Error: Invalid recipientAddress (64 hex characters required).");
+    }
+    if (senderAddresses.isEmpty()) {
+        return QStringLiteral("Error: At least one sender address required.");
+    }
+    QVector<QByteArray> fundingBytes;
+    for (const QString& hex : senderAddresses) {
+        QByteArray b = parseAddressHex(hex);
+        if (b.isEmpty() || b.size() != kAddressBytes) {
+            return QStringLiteral("Error: Invalid sender address (64 hex characters required).");
+        }
+        fundingBytes.append(b);
+    }
+    QVector<const uint8_t*> fundingPtrs;
+    for (const QByteArray& b : fundingBytes)
+        fundingPtrs.append(reinterpret_cast<const uint8_t*>(b.constData()));
+
+    QByteArray tipBytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optionalTipHex.isEmpty()) {
+        tipBytes = parseAddressHex(optionalTipHex);
+        if (tipBytes.isEmpty() || tipBytes.size() != kAddressBytes) {
+            return QStringLiteral("Error: Invalid optional tip (64 hex characters or empty).");
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tipBytes.constData());
+    }
+
+    TransferFundsArguments args{};
+    args.optional_tip = optional_tip;
+    args.change_public_key = reinterpret_cast<const uint8_t*>(changeBytes.constData());
+    args.funding_public_keys = fundingPtrs.constData();
+    args.funding_public_keys_len = static_cast<size_t>(fundingPtrs.size());
+    args.recipient_public_key = reinterpret_cast<const uint8_t*>(recipientBytes.constData());
+    args.amount = amountVal;
+
+    auto [value, error] = transfer_funds(node, &args);
     if (!is_ok(&error)) {
-        qCritical() << "Failed to transfer funds. Error:" << error;
-        return 1;
+        return QStringLiteral("Error: Failed to transfer funds: ") + QString::number(static_cast<int>(error));
     }
-
-    std::ranges::copy(value, *output_hash);
-    return 0;
+    // value is Hash (32 bytes); convert to hex string
+    QByteArray hashBytes(reinterpret_cast<const char*>(&value), kAddressBytes);
+    return QString::fromUtf8(hashBytes.toHex());
 }
 
-int LogosBlockchainModule::wallet_get_known_addresses(lb::KnownAddresses* output) {
+QString LogosBlockchainModule::wallet_transfer_funds(
+    const QString& changePublicKey,
+    const QString& senderAddress,
+    const QString& recipientAddress,
+    const QString& amount,
+    const QString& optionalTipHex)
+{
+    return wallet_transfer_funds(changePublicKey, QStringList{senderAddress}, recipientAddress, amount, optionalTipHex);
+}
+
+QStringList LogosBlockchainModule::wallet_get_known_addresses() {
+    QStringList out;
     if (!node) {
         qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
+        return out;
     }
-
     auto [value, error] = get_known_addresses(node);
     if (!is_ok(&error)) {
         qCritical() << "Failed to get known addresses. Error:" << error;
-        return 1;
+        return out;
     }
-
-    *output = lb::KnownAddresses(value);
-    return 0;
+    // Each address is kAddressBytes (32) byte
+    for (size_t i = 0; i < value.len; ++i) {
+        const uint8_t* ptr = value.addresses[i];
+        if (ptr) {
+            QByteArray addr(reinterpret_cast<const char*>(ptr), kAddressBytes);
+            out.append(QString::fromUtf8(addr.toHex()));
+        }
+    }
+    free_known_addresses(value);
+    qDebug() << "blockchain lib: known addresses, count=" << out.size()
+             << "sample:" << (out.isEmpty() ? QLatin1String("(none)") : out.constFirst());
+    return out;
 }
 
 void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantList& data) {
