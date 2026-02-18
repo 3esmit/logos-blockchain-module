@@ -31,7 +31,9 @@ void LogosBlockchainModule::onNewBlockCallback(const char* block) {
         QVariantList data;
         data.append(QString::fromUtf8(block));
         s_instance->emitEvent("newBlock", data);
-        free_cstring(const_cast<char*>(block)); // Free Rust-allocated memory
+        // SAFETY:
+        // We are getting an owned pointer here which is freed after this callback is called, so there is not need to
+        // free the resrouce here as we are copying the data!
     }
 }
 
