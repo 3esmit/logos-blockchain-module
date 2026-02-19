@@ -150,7 +150,7 @@ add_library(logos_cpp_sdk INTERFACE)
 target_include_directories(logos_cpp_sdk INTERFACE "${SDK_INC}" "${SDK_INC}/cpp")
 
 # ---- Plugin ----
-set(PLUGIN_TARGET logos-blockchain-module)
+set(PLUGIN_TARGET logos_blockchain_module)
 
 qt_add_plugin(${PLUGIN_TARGET} CLASS_NAME LogosBlockchainModule)
 

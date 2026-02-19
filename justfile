@@ -7,7 +7,7 @@ configure:
       ${LOGOS_BLOCKCHAIN_INCLUDE:+-DLOGOS_BLOCKCHAIN_INCLUDE="$LOGOS_BLOCKCHAIN_INCLUDE"}
 
 build: configure
-    cmake --build build --parallel --target logos-blockchain-module
+    cmake --build build --parallel --target logos_blockchain_module
 
 clean:
     rm -rf build result
