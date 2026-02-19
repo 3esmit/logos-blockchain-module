@@ -23,11 +23,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1771428592,
-        "narHash": "sha256-J0bJOaHNUh7yDXLw4UajReywSSvN36JiY+e6tPMvqwM=",
+        "lastModified": 1771509425,
+        "narHash": "sha256-hTmDLC+RcfPyuEbE8xnhL4qAN4U5M2RojWk0YonsSFY=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain",
-        "rev": "7a15c6474a5f9b7c12a36f43e3858b8dcf27ee40",
+        "rev": "9ae525d6d16c0431b61d4e4c44f29dd0397f4fd4",
         "type": "github"
       },
       "original": {

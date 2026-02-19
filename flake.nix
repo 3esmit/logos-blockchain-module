@@ -105,7 +105,7 @@
             program =
               "${pkgs.writeShellScriptBin "inspect-module" ''
                 exec ${logosModuleViewer}/bin/logos-module-viewer \
-                  --module ${logosBlockchainModuleLib}/lib/liblogos-blockchain-module.${extension}
+                  --module ${logosBlockchainModuleLib}/lib/liblogos_blockchain_module.${extension}
               ''}/bin/inspect-module";
           };
         in
