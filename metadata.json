@@ -5,7 +5,7 @@
   "author": "Logos Blockchain Team",
   "type": "blockchain",
   "category": "blockchain",
-  "main": "LogosBlockchainModule",
+  "main": "liblogos_blockchain_module",
   "dependencies": [],
   "capabilities": [],
   "include": [
