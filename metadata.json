@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Logos blockchain node for logos-core",
   "author": "Logos Blockchain Team",
-  "type": "blockchain",
+  "type": "core",
   "category": "blockchain",
   "main": "liblogos_blockchain_module",
   "dependencies": [],
