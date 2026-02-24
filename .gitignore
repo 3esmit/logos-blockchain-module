@@ -1,6 +1,7 @@
 .idea/
 .qt/
 *.bak
+*ignore*
 
 # CMake generated files
 .cache/
