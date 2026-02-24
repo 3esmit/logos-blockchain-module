@@ -1,6 +1,7 @@
 #include "logos_blockchain_module.h"
 #include "logos_api_client.h"
 #include <QByteArray>
+#include <QDir>
 #include <QVariant>
 
 // Define static member
@@ -72,8 +73,8 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         return 1;
     }
 
-    // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable
-    QString circuits_path = logosAPI->property("modulePath").toString().append(QString::fromUtf8("\\circuits"));
+    // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable (use QDir for correct path separator on all platforms)
+    QString circuits_path = QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
     qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
     qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
     QString effective_config_path = config_path;
