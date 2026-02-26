@@ -81,7 +81,8 @@
             ];
 
             postInstall = ''
-              cp -r ${logosBlockchainC}/circuits $out/lib/
+              mkdir $out/share
+              cp -r ${logosBlockchainC}/circuits $out/share
             '';
         };
         in
