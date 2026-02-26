@@ -7,7 +7,7 @@
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-core.url = "github:logos-co/logos-cpp-sdk";
 
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=fed5efe6bd52c0d62d490c35f5c2a4368b94342f"; # 0.1.7 with c-bindings transfer funds fix
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=0.1.9";
 
     logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
