@@ -84,6 +84,10 @@
               mkdir $out/share
               cp -r ${logosBlockchainC}/circuits $out/share
             '';
+
+            postFixup = ''
+              cp -r ${logosBlockchainC}/circuits $out/lib/circuits
+            '';
         };
         in
         {
