@@ -85,6 +85,11 @@
               cp -r ${logosBlockchainC}/circuits $out/share
             '';
 
+            # Logos Core Edge-case
+            # The current version of Logos Core expects circuits' binaries under `lib/circuits/`.
+            # Until we address this in Logos Core, we use this hook to include to ensure the circuits' binaries
+            # are included in the binary bundle and avoid the circuits being mangled by Nix (which did that when
+            # copying them in a previous phase).
             postFixup = ''
               cp -r ${logosBlockchainC}/circuits $out/lib/circuits
             '';
