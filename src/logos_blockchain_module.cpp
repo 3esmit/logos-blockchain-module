@@ -405,13 +405,5 @@ int LogosBlockchainModule::generate_user_config_from_str(const QString& args) {
 }
 
 void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantList& data) {
-    if (!logosAPI) {
-        qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << eventName;
-        return;
-    }
-    if (!client) {
-        qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client for event" << eventName;
-        return;
-    }
-    client->onEventResponse(this, eventName, data);
+    emit eventResponse(eventName, data);
 }
