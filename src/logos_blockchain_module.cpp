@@ -151,6 +151,30 @@ namespace {
     };
 } // namespace
 
+namespace environment {
+    constexpr auto LOGOS_BLOCKCHAIN_CIRCUITS = "LOGOS_BLOCKCHAIN_CIRCUITS";
+
+    // Checks the directory exists and ensures it contains at least one file to avoid an empty directory false positive
+    bool is_circuits_path_valid(const QString& path) {
+        const QDir directory(path);
+        return directory.exists() && !directory.entryList(QDir::Files | QDir::NoDotAndDotDot).isEmpty();
+    }
+
+    void setup_circuits_path(const LogosAPI& logos_api) {
+        const QString module_path = logos_api.property("modulePath").toString();
+        const QDir module_directory(module_path);
+
+        const QString circuits_path = module_directory.filePath(QStringLiteral("circuits"));
+        if (!is_circuits_path_valid(circuits_path)) {
+            qFatal() << "The LOGOS_BLOCKCHAIN_CIRCUITS environment variable is not set or does not contain any files.";
+            return;
+        }
+
+        qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
+        qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
+    }
+} // namespace environment
+
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
     if (s_instance) {
         qInfo() << "Received new block: " << block;
@@ -159,7 +183,7 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
         s_instance->emit_event("newBlock", data);
         // SAFETY:
         // We are getting an owned pointer here which is freed after this callback is called, so there is not need to
-        // free the resrouce here as we are copying the data!
+        // free the resource here as we are copying the data!
     }
 }
 
@@ -220,12 +244,12 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         qWarning() << "Could not execute the operation: The node is already running.";
         return 1;
     }
+    if (!logosAPI) {
+        qCritical() << "LogosAPI instance is null, cannot start node.";
+        return 2;
+    }
 
-    // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable (use QDir for correct path separator on all platforms)
-    const QString circuits_path =
-        QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
-    qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
-    qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
+    environment::setup_circuits_path(*logosAPI);
     QString effective_config_path = config_path;
 
     if (effective_config_path.isEmpty()) {
@@ -235,7 +259,7 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
             qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
         } else {
             qCritical() << "Config path was not specified and LB_CONFIG_PATH is not set.";
-            return 2;
+            return 3;
         }
     }
 
@@ -252,7 +276,7 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
     qInfo() << "Start node returned with value and error.";
     if (!is_ok(&error)) {
         qCritical() << "Failed to start the node. Error:" << error;
-        return 3;
+        return 4;
     }
 
     node = value;
@@ -260,15 +284,15 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
 
     // Subscribe to block events
     if (!node) {
-        qWarning() << "Could not subcribe to block events: The node is not running.";
-        return 1;
+        qWarning() << "Could not subscribe to block events: The node is not running.";
+        return 4;
     }
 
     s_instance = this;
     const OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (!is_ok(&subscribe_status)) {
         qCritical() << "Failed to subscribe to new blocks. Error:" << subscribe_status;
-        return 4;
+        return 5;
     }
 
     return 0;
@@ -388,7 +412,9 @@ QString LogosBlockchainModule::wallet_transfer_funds(
     const QString& amount,
     const QString& optional_tip_hex
 ) {
-    return wallet_transfer_funds(change_public_key, QStringList{sender_address}, recipient_address, amount, optional_tip_hex);
+    return wallet_transfer_funds(
+        change_public_key, QStringList{sender_address}, recipient_address, amount, optional_tip_hex
+    );
 }
 
 QStringList LogosBlockchainModule::wallet_get_known_addresses() {
