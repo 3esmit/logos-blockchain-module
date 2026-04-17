@@ -11,402 +11,22 @@ LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
 
 namespace {
     // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
-    constexpr int kAddressBytes = static_cast<int>(sizeof(Hash));
-    constexpr int kAddressHexLen = kAddressBytes * 2;
+    constexpr int ADDRESS_BYTES = sizeof(Hash);
+    constexpr int ADDRESS_HEX_LEN = ADDRESS_BYTES * 2;
 
-    // Parses kAddressHexLen hex chars (optional 0x prefix) to kAddressBytes. Returns empty QByteArray on error.
-    QByteArray parseAddressHex(const QString& addressHex) {
-        QString hex = addressHex.trimmed();
+    // Parses ADDRESS_HEX_LEN hex chars (optional 0x prefix) to ADDRESS_BYTES. Returns empty QByteArray on error.
+    QByteArray parse_address_hex(const QString& address_hex) {
+        QString hex = address_hex.trimmed();
         if (hex.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
             hex = hex.mid(2);
-        if (hex.length() != kAddressHexLen)
+        if (hex.length() != ADDRESS_HEX_LEN)
             return {};
         QByteArray bytes = QByteArray::fromHex(hex.toUtf8());
-        if (bytes.size() != kAddressBytes)
+        if (bytes.size() != ADDRESS_BYTES)
             return {};
         return bytes;
     }
-} // namespace
 
-void LogosBlockchainModule::onNewBlockCallback(const char* block) {
-    if (s_instance) {
-        qInfo() << "Received new block: " << block;
-        QVariantList data;
-        data.append(QString::fromUtf8(block));
-        s_instance->emitEvent("newBlock", data);
-        // SAFETY:
-        // We are getting an owned pointer here which is freed after this callback is called, so there is not need to
-        // free the resrouce here as we are copying the data!
-    }
-}
-
-LogosBlockchainModule::LogosBlockchainModule() {
-    node = nullptr;
-}
-
-LogosBlockchainModule::~LogosBlockchainModule() {
-    s_instance = nullptr;
-    if (node) {
-        stop();
-    }
-}
-
-QString LogosBlockchainModule::name() const {
-    return "liblogos_blockchain_module";
-}
-
-QString LogosBlockchainModule::version() const {
-    return "1.0.0";
-}
-
-void LogosBlockchainModule::initLogos(LogosAPI* logosAPIInstance) {
-    logosAPI = logosAPIInstance;
-    if (logosAPI) {
-        client = logosAPI->getClient("liblogos_blockchain_module");
-        if (!client) {
-            qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client";
-        }
-    }
-}
-
-int LogosBlockchainModule::start(const QString& config_path, const QString& deployment) {
-    if (node) {
-        qWarning() << "Could not execute the operation: The node is already running.";
-        return 1;
-    }
-
-    // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable (use QDir for correct path separator on all platforms)
-    const QString circuits_path =
-        QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
-    qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
-    qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
-    QString effective_config_path = config_path;
-
-    if (effective_config_path.isEmpty()) {
-        const char* env = std::getenv("LB_CONFIG_PATH"); // NOLINT: Move definition to if-statement
-        if (env && *env) {
-            effective_config_path = QString::fromUtf8(env);
-            qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
-        } else {
-            qCritical() << "Config path was not specified and LB_CONFIG_PATH is not set.";
-            return 2;
-        }
-    }
-
-    qInfo() << "Starting the node with the configuration file:" << effective_config_path;
-    qInfo() << "Using deployment:" << (deployment.isEmpty() ? "<default>" : deployment);
-
-    const QByteArray config_path_buffer = effective_config_path.toUtf8();
-    const char* config_path_ptr = effective_config_path.isEmpty() ? nullptr : config_path_buffer.constData();
-
-    const QByteArray deployment_buffer = deployment.toUtf8();
-    const char* deployment_ptr = deployment.isEmpty() ? nullptr : deployment_buffer.constData();
-
-    auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
-    qInfo() << "Start node returned with value and error.";
-    if (!is_ok(&error)) {
-        qCritical() << "Failed to start the node. Error:" << error;
-        return 3;
-    }
-
-    node = value;
-    qInfo() << "The node was started successfully.";
-
-    // Subscribe to block events
-    if (!node) {
-        qWarning() << "Could not subcribe to block events: The node is not running.";
-        return 1;
-    }
-
-    s_instance = this;
-    subscribe_to_new_blocks(node, onNewBlockCallback);
-
-    return 0;
-}
-
-int LogosBlockchainModule::stop() {
-    if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
-    }
-
-    s_instance = nullptr; // Clear before stopping to prevent callbacks during shutdown
-
-    const OperationStatus status = stop_node(node);
-    if (is_ok(&status)) {
-        qInfo() << "The node was stopped successfully.";
-    } else {
-        qCritical() << "Could not stop the node. Error:" << status;
-    }
-
-    node = nullptr;
-    return 0;
-}
-
-QString LogosBlockchainModule::wallet_get_balance(const QString& addressHex) {
-    qDebug() << "wallet_get_balance: addressHex=" << addressHex;
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    const QByteArray bytes = parseAddressHex(addressHex);
-    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
-        return QStringLiteral("Error: Address must be 64 hex characters (32 bytes).");
-    }
-
-    auto [value, error] = get_balance(node, reinterpret_cast<const uint8_t*>(bytes.constData()), nullptr);
-    if (!is_ok(&error)) {
-        return QStringLiteral("Error: Failed to get balance: ") + QString::number(error);
-    }
-
-    return QString::number(value);
-}
-
-QString LogosBlockchainModule::wallet_transfer_funds(
-    const QString& changePublicKey,
-    const QStringList& senderAddresses,
-    const QString& recipientAddress,
-    const QString& amount,
-    const QString& optionalTipHex
-) {
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    bool ok = false;
-    const quint64 amountVal = amount.trimmed().toULongLong(&ok);
-    if (!ok) {
-        return QStringLiteral("Error: Invalid amount (positive integer required).");
-    }
-
-    const QByteArray changeBytes = parseAddressHex(changePublicKey);
-    if (changeBytes.isEmpty() || changeBytes.size() != kAddressBytes) {
-        return QStringLiteral("Error: Invalid changePublicKey (64 hex characters required).");
-    }
-    const QByteArray recipientBytes = parseAddressHex(recipientAddress);
-    if (recipientBytes.isEmpty() || recipientBytes.size() != kAddressBytes) {
-        return QStringLiteral("Error: Invalid recipientAddress (64 hex characters required).");
-    }
-    if (senderAddresses.isEmpty()) {
-        return QStringLiteral("Error: At least one sender address required.");
-    }
-    QVector<QByteArray> fundingBytes;
-    for (const QString& hex : senderAddresses) {
-        QByteArray b = parseAddressHex(hex);
-        if (b.isEmpty() || b.size() != kAddressBytes) {
-            return QStringLiteral("Error: Invalid sender address (64 hex characters required).");
-        }
-        fundingBytes.append(b);
-    }
-    QVector<const uint8_t*> fundingPtrs;
-    for (const QByteArray& b : fundingBytes)
-        fundingPtrs.append(reinterpret_cast<const uint8_t*>(b.constData()));
-
-    QByteArray tipBytes; // NOLINT: Needs to be outside of scope for lifetime
-    const HeaderId* optional_tip = nullptr;
-    if (!optionalTipHex.isEmpty()) {
-        tipBytes = parseAddressHex(optionalTipHex);
-        if (tipBytes.isEmpty() || tipBytes.size() != kAddressBytes) {
-            return QStringLiteral("Error: Invalid optional tip (64 hex characters or empty).");
-        }
-        optional_tip = reinterpret_cast<const HeaderId*>(tipBytes.constData());
-    }
-
-    TransferFundsArguments args{};
-    args.optional_tip = optional_tip;
-    args.change_public_key = reinterpret_cast<const uint8_t*>(changeBytes.constData());
-    args.funding_public_keys = fundingPtrs.constData();
-    args.funding_public_keys_len = static_cast<size_t>(fundingPtrs.size());
-    args.recipient_public_key = reinterpret_cast<const uint8_t*>(recipientBytes.constData());
-    args.amount = amountVal;
-
-    auto [value, error] = transfer_funds(node, &args);
-    if (!is_ok(&error)) {
-        return QStringLiteral("Error: Failed to transfer funds: ") + QString::number(error);
-    }
-    // value is Hash (32 bytes); convert to hex string
-    const QByteArray hashBytes(reinterpret_cast<const char*>(&value), kAddressBytes);
-    return QString::fromUtf8(hashBytes.toHex());
-}
-
-QString LogosBlockchainModule::wallet_transfer_funds(
-    const QString& changePublicKey,
-    const QString& senderAddress,
-    const QString& recipientAddress,
-    const QString& amount,
-    const QString& optionalTipHex
-) {
-    return wallet_transfer_funds(changePublicKey, QStringList{senderAddress}, recipientAddress, amount, optionalTipHex);
-}
-
-QStringList LogosBlockchainModule::wallet_get_known_addresses() {
-    QStringList out;
-    if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return out;
-    }
-    auto [value, error] = get_known_addresses(node);
-    if (!is_ok(&error)) {
-        qCritical() << "Failed to get known addresses. Error:" << error;
-        return out;
-    }
-    // Each address is kAddressBytes (32) byte
-    for (size_t i = 0; i < value.len; ++i) {
-        const uint8_t* ptr = value.addresses[i]; // NOLINT: Move definition to if-statement
-        if (ptr) {
-            QByteArray addr(reinterpret_cast<const char*>(ptr), kAddressBytes);
-            out.append(QString::fromUtf8(addr.toHex()));
-        }
-    }
-    free_known_addresses(value);
-    qDebug() << "blockchain lib: known addresses, count=" << out.size()
-             << "sample:" << (out.isEmpty() ? QLatin1String("(none)") : out.constFirst());
-    return out;
-}
-
-int LogosBlockchainModule::blend_join_as_core_node(
-    const QString& providerIdHex,
-    const QString& zkIdHex,
-    const QString& lockedNoteIdHex,
-    const QStringList& locators
-) {
-    if (!node) {
-        qWarning() << "Could not execute the operation: The node is not running.";
-        return 1;
-    }
-
-    const QByteArray providerIdBytes = parseAddressHex(providerIdHex);
-    if (providerIdBytes.isEmpty() || providerIdBytes.size() != kAddressBytes) {
-        qCritical() << "blend_join_as_core_node: Invalid providerId (64 hex characters required).";
-        return 2;
-    }
-
-    const QByteArray zkIdBytes = parseAddressHex(zkIdHex);
-    if (zkIdBytes.isEmpty() || zkIdBytes.size() != kAddressBytes) {
-        qCritical() << "blend_join_as_core_node: Invalid zkId (64 hex characters required).";
-        return 3;
-    }
-
-    const QByteArray lockedNoteIdBytes = parseAddressHex(lockedNoteIdHex);
-    if (lockedNoteIdBytes.isEmpty() || lockedNoteIdBytes.size() != kAddressBytes) {
-        qCritical() << "blend_join_as_core_node: Invalid lockedNoteId (64 hex characters required).";
-        return 4;
-    }
-
-    // QString is UTF-16, but the FFI requires UTF-8.
-    // locatorsData owns the converted buffers, while locatorsPtrs holds raw pointers into them for the FFI call.
-    // Using reserve() prevents reallocation, keeping the constData() pointers stable.
-    std::vector<QByteArray> locatorsData;
-    std::vector<const char*> locatorsPtrs;
-    locatorsData.reserve(locators.size());
-    locatorsPtrs.reserve(locators.size());
-    for (const QString& locator : locators) {
-        locatorsData.push_back(locator.toUtf8());
-        locatorsPtrs.push_back(locatorsData.back().constData());
-    }
-
-    auto [value, error] = ::blend_join_as_core_node(
-        node,
-        reinterpret_cast<const uint8_t*>(providerIdBytes.constData()),
-        reinterpret_cast<const uint8_t*>(zkIdBytes.constData()),
-        reinterpret_cast<const uint8_t*>(lockedNoteIdBytes.constData()),
-        locatorsPtrs.data(),
-        locatorsPtrs.size()
-    );
-    if (!is_ok(&error)) {
-        qCritical() << "Failed to join as core node. Error:" << error;
-        return 5;
-    }
-
-    const QByteArray declarationIdBytes(reinterpret_cast<const char*>(&value), sizeof(value));
-    qInfo() << "Successfully joined as core node. DeclarationId:" << declarationIdBytes.toHex();
-    return 0;
-}
-
-QString LogosBlockchainModule::get_block(const QString& headerIdHex) {
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    const QByteArray bytes = parseAddressHex(headerIdHex);
-    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
-        return QStringLiteral("Error: Header ID must be 64 hex characters (32 bytes).");
-    }
-
-    auto [value, error] = ::get_block(node, reinterpret_cast<const HeaderId*>(bytes.constData()));
-    if (!is_ok(&error)) {
-        qWarning() << "Failed to get block. Error:" << error;
-        return QStringLiteral("Error: Failed to get block: ") + QString::number(error);
-    }
-
-    const QString result = QString::fromUtf8(value);
-    free_cstring(value);
-    return result;
-}
-
-QString LogosBlockchainModule::get_transaction(const QString& txHashHex) {
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    const QByteArray bytes = parseAddressHex(txHashHex);
-    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
-        return QStringLiteral("Error: Transaction hash must be 64 hex characters (32 bytes).");
-    }
-
-    auto [value, error] = ::get_transaction(node, reinterpret_cast<const TxHash*>(bytes.constData()));
-    if (!is_ok(&error)) {
-        qWarning() << "Failed to get transaction. Error:" << error;
-        return QStringLiteral("Error: Failed to get transaction: ") + QString::number(error);
-    }
-
-    const QString result = QString::fromUtf8(value);
-    free_cstring(value);
-    return result;
-}
-
-QString LogosBlockchainModule::get_blocks(const quint64 fromSlot, const quint64 toSlot) {
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    auto [value, error] = ::get_blocks(node, fromSlot, toSlot);
-    if (!is_ok(&error)) {
-        qWarning() << "Failed to get blocks. Error:" << error;
-        return QStringLiteral("Error: Failed to get blocks: ") + QString::number(error);
-    }
-
-    const QString result = QString::fromUtf8(value);
-    free_cstring(value);
-    return result;
-}
-
-QString LogosBlockchainModule::get_cryptarchia_info() {
-    if (!node) {
-        return QStringLiteral("Error: The node is not running.");
-    }
-
-    auto [value, error] = ::get_cryptarchia_info(node);
-    if (!is_ok(&error)) {
-        qWarning() << "Failed to get cryptarchia info. Error:" << error;
-        return QStringLiteral("Error: Failed to get cryptarchia info: ") + QString::number(error);
-    }
-
-    QJsonObject obj;
-    obj[QStringLiteral("lib")] =
-        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->lib), kAddressBytes).toHex());
-    obj[QStringLiteral("tip")] =
-        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->tip), kAddressBytes).toHex());
-    obj[QStringLiteral("slot")] = static_cast<qint64>(value->slot);
-    obj[QStringLiteral("height")] = static_cast<qint64>(value->height);
-    obj[QStringLiteral("mode")] =
-        (value->mode == State::Online) ? QStringLiteral("Online") : QStringLiteral("Bootstrapping");
-
-    free_cryptarchia_info(value);
-    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
-}
-
-namespace {
     // Wrapper that owns data and provides GenerateConfigArgs
     struct OwnedGenerateConfigArgs {
         std::vector<QByteArray> initial_peers_data;
@@ -531,6 +151,53 @@ namespace {
     };
 } // namespace
 
+void LogosBlockchainModule::on_new_block_callback(const char* block) {
+    if (s_instance) {
+        qInfo() << "Received new block: " << block;
+        QVariantList data;
+        data.append(QString::fromUtf8(block));
+        s_instance->emit_event("newBlock", data);
+        // SAFETY:
+        // We are getting an owned pointer here which is freed after this callback is called, so there is not need to
+        // free the resrouce here as we are copying the data!
+    }
+}
+
+LogosBlockchainModule::LogosBlockchainModule() {
+    node = nullptr;
+}
+
+LogosBlockchainModule::~LogosBlockchainModule() {
+    s_instance = nullptr;
+    if (node) {
+        stop();
+    }
+}
+
+// Logos Core
+
+QString LogosBlockchainModule::name() const {
+    return "liblogos_blockchain_module";
+}
+
+QString LogosBlockchainModule::version() const {
+    return "1.0.0";
+}
+
+void LogosBlockchainModule::initLogos(LogosAPI* logos_api_instance) {
+    logosAPI = logos_api_instance;
+    if (logosAPI) {
+        client = logosAPI->getClient("liblogos_blockchain_module");
+        if (!client) {
+            qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client";
+        }
+    }
+}
+
+// ---- Node ----
+
+// Lifecycle
+
 int LogosBlockchainModule::generate_user_config(const QVariantMap& args) {
     const OwnedGenerateConfigArgs owned_args(args);
 
@@ -548,14 +215,374 @@ int LogosBlockchainModule::generate_user_config_from_str(const QString& args) {
     return generate_user_config(parsed_args);
 }
 
-void LogosBlockchainModule::emitEvent(const QString& eventName, const QVariantList& data) {
+int LogosBlockchainModule::start(const QString& config_path, const QString& deployment) {
+    if (node) {
+        qWarning() << "Could not execute the operation: The node is already running.";
+        return 1;
+    }
+
+    // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable (use QDir for correct path separator on all platforms)
+    const QString circuits_path =
+        QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
+    qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
+    qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
+    QString effective_config_path = config_path;
+
+    if (effective_config_path.isEmpty()) {
+        const char* env = std::getenv("LB_CONFIG_PATH"); // NOLINT: Move definition to if-statement
+        if (env && *env) {
+            effective_config_path = QString::fromUtf8(env);
+            qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
+        } else {
+            qCritical() << "Config path was not specified and LB_CONFIG_PATH is not set.";
+            return 2;
+        }
+    }
+
+    qInfo() << "Starting the node with the configuration file:" << effective_config_path;
+    qInfo() << "Using deployment:" << (deployment.isEmpty() ? "<default>" : deployment);
+
+    const QByteArray config_path_buffer = effective_config_path.toUtf8();
+    const char* config_path_ptr = effective_config_path.isEmpty() ? nullptr : config_path_buffer.constData();
+
+    const QByteArray deployment_buffer = deployment.toUtf8();
+    const char* deployment_ptr = deployment.isEmpty() ? nullptr : deployment_buffer.constData();
+
+    auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
+    qInfo() << "Start node returned with value and error.";
+    if (!is_ok(&error)) {
+        qCritical() << "Failed to start the node. Error:" << error;
+        return 3;
+    }
+
+    node = value;
+    qInfo() << "The node was started successfully.";
+
+    // Subscribe to block events
+    if (!node) {
+        qWarning() << "Could not subcribe to block events: The node is not running.";
+        return 1;
+    }
+
+    s_instance = this;
+    const OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
+    if (!is_ok(&subscribe_status)) {
+        qCritical() << "Failed to subscribe to new blocks. Error:" << subscribe_status;
+        return 4;
+    }
+
+    return 0;
+}
+
+int LogosBlockchainModule::stop() {
+    if (!node) {
+        qWarning() << "Could not execute the operation: The node is not running.";
+        return 1;
+    }
+
+    s_instance = nullptr; // Clear before stopping to prevent callbacks during shutdown
+
+    const OperationStatus status = stop_node(node);
+    if (is_ok(&status)) {
+        qInfo() << "The node was stopped successfully.";
+    } else {
+        qCritical() << "Could not stop the node. Error:" << status;
+    }
+
+    node = nullptr;
+    return 0;
+}
+
+// Wallet
+
+QString LogosBlockchainModule::wallet_get_balance(const QString& address_hex) {
+    qDebug() << "wallet_get_balance: address_hex=" << address_hex;
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray bytes = parse_address_hex(address_hex);
+    if (bytes.isEmpty() || bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Address must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = get_balance(node, reinterpret_cast<const uint8_t*>(bytes.constData()), nullptr);
+    if (!is_ok(&error)) {
+        return QStringLiteral("Error: Failed to get balance: ") + QString::number(error);
+    }
+
+    return QString::number(value);
+}
+
+QString LogosBlockchainModule::wallet_transfer_funds(
+    const QString& change_public_key,
+    const QStringList& sender_addresses,
+    const QString& recipient_address,
+    const QString& amount,
+    const QString& optional_tip_hex
+) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    bool ok = false;
+    const quint64 amount_val = amount.trimmed().toULongLong(&ok);
+    if (!ok) {
+        return QStringLiteral("Error: Invalid amount (positive integer required).");
+    }
+
+    const QByteArray change_bytes = parse_address_hex(change_public_key);
+    if (change_bytes.isEmpty() || change_bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Invalid change_public_key (64 hex characters required).");
+    }
+    const QByteArray recipient_bytes = parse_address_hex(recipient_address);
+    if (recipient_bytes.isEmpty() || recipient_bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Invalid recipient_address (64 hex characters required).");
+    }
+    if (sender_addresses.isEmpty()) {
+        return QStringLiteral("Error: At least one sender address required.");
+    }
+    QVector<QByteArray> funding_bytes;
+    for (const QString& hex : sender_addresses) {
+        QByteArray b = parse_address_hex(hex);
+        if (b.isEmpty() || b.size() != ADDRESS_BYTES) {
+            return QStringLiteral("Error: Invalid sender address (64 hex characters required).");
+        }
+        funding_bytes.append(b);
+    }
+    QVector<const uint8_t*> funding_ptrs;
+    for (const QByteArray& b : funding_bytes)
+        funding_ptrs.append(reinterpret_cast<const uint8_t*>(b.constData()));
+
+    QByteArray tip_bytes; // NOLINT: Needs to be outside of scope for lifetime
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.isEmpty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.isEmpty() || tip_bytes.size() != ADDRESS_BYTES) {
+            return QStringLiteral("Error: Invalid optional tip (64 hex characters or empty).");
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.constData());
+    }
+
+    TransferFundsArguments args{};
+    args.optional_tip = optional_tip;
+    args.change_public_key = reinterpret_cast<const uint8_t*>(change_bytes.constData());
+    args.funding_public_keys = funding_ptrs.constData();
+    args.funding_public_keys_len = static_cast<size_t>(funding_ptrs.size());
+    args.recipient_public_key = reinterpret_cast<const uint8_t*>(recipient_bytes.constData());
+    args.amount = amount_val;
+
+    auto [value, error] = transfer_funds(node, &args);
+    if (!is_ok(&error)) {
+        return QStringLiteral("Error: Failed to transfer funds: ") + QString::number(error);
+    }
+    // value is Hash (32 bytes); convert to hex string
+    const QByteArray hash_bytes(reinterpret_cast<const char*>(&value), ADDRESS_BYTES);
+    return QString::fromUtf8(hash_bytes.toHex());
+}
+
+QString LogosBlockchainModule::wallet_transfer_funds(
+    const QString& change_public_key,
+    const QString& sender_address,
+    const QString& recipient_address,
+    const QString& amount,
+    const QString& optional_tip_hex
+) {
+    return wallet_transfer_funds(change_public_key, QStringList{sender_address}, recipient_address, amount, optional_tip_hex);
+}
+
+QStringList LogosBlockchainModule::wallet_get_known_addresses() {
+    QStringList out;
+    if (!node) {
+        qWarning() << "Could not execute the operation: The node is not running.";
+        return out;
+    }
+    auto [value, error] = get_known_addresses(node);
+    if (!is_ok(&error)) {
+        qCritical() << "Failed to get known addresses. Error:" << error;
+        return out;
+    }
+    // Each address is ADDRESS_BYTES (32) bytes
+    for (size_t i = 0; i < value.len; ++i) {
+        const uint8_t* ptr = value.addresses[i]; // NOLINT: Move definition to if-statement
+        if (ptr) {
+            QByteArray addr(reinterpret_cast<const char*>(ptr), ADDRESS_BYTES);
+            out.append(QString::fromUtf8(addr.toHex()));
+        }
+    }
+    const OperationStatus free_status = free_known_addresses(value);
+    if (!is_ok(&free_status)) {
+        qWarning() << "Failed to free known addresses. Error:" << free_status;
+    }
+    qDebug() << "blockchain lib: known addresses, count=" << out.size()
+             << "sample:" << (out.isEmpty() ? QLatin1String("(none)") : out.constFirst());
+    return out;
+}
+
+// Blend
+
+QString LogosBlockchainModule::blend_join_as_core_node(
+    const QString& provider_id_hex,
+    const QString& zk_id_hex,
+    const QString& locked_note_id_hex,
+    const QStringList& locators
+) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray provider_id_bytes = parse_address_hex(provider_id_hex);
+    if (provider_id_bytes.isEmpty() || provider_id_bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Invalid provider_id_hex (64 hex characters required).");
+    }
+
+    const QByteArray zk_id_bytes = parse_address_hex(zk_id_hex);
+    if (zk_id_bytes.isEmpty() || zk_id_bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Invalid zk_id_hex (64 hex characters required).");
+    }
+
+    const QByteArray locked_note_id_bytes = parse_address_hex(locked_note_id_hex);
+    if (locked_note_id_bytes.isEmpty() || locked_note_id_bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Invalid locked_note_id_hex (64 hex characters required).");
+    }
+
+    // QString is UTF-16, but the FFI requires UTF-8.
+    // locators_data owns the converted buffers, while locators_ptrs holds raw pointers into them for the FFI call.
+    // Using reserve() prevents reallocation, keeping the constData() pointers stable.
+    std::vector<QByteArray> locators_data;
+    std::vector<const char*> locators_ptrs;
+    locators_data.reserve(locators.size());
+    locators_ptrs.reserve(locators.size());
+    for (const QString& locator : locators) {
+        locators_data.push_back(locator.toUtf8());
+        locators_ptrs.push_back(locators_data.back().constData());
+    }
+
+    auto [value, error] = ::blend_join_as_core_node(
+        node,
+        reinterpret_cast<const uint8_t*>(provider_id_bytes.constData()),
+        reinterpret_cast<const uint8_t*>(zk_id_bytes.constData()),
+        reinterpret_cast<const uint8_t*>(locked_note_id_bytes.constData()),
+        locators_ptrs.data(),
+        locators_ptrs.size()
+    );
+    if (!is_ok(&error)) {
+        return QStringLiteral("Error: Failed to join as core node: ") + QString::number(error);
+    }
+
+    const QByteArray declaration_id_bytes(reinterpret_cast<const char*>(&value), sizeof(value));
+    const QString declaration_id = QString::fromUtf8(declaration_id_bytes.toHex());
+    qInfo() << "Successfully joined as core node. DeclarationId:" << declaration_id;
+    return declaration_id;
+}
+
+// Storage
+
+QString LogosBlockchainModule::get_block(const QString& header_id_hex) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray bytes = parse_address_hex(header_id_hex);
+    if (bytes.isEmpty() || bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Header ID must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_block(node, reinterpret_cast<const HeaderId*>(bytes.constData()));
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get block. Error:" << error;
+        return QStringLiteral("Error: Failed to get block: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    const OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        qWarning() << "Failed to free block string. Error:" << free_status;
+    }
+    return result;
+}
+
+QString LogosBlockchainModule::get_blocks(const quint64 from_slot, const quint64 to_slot) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    auto [value, error] = ::get_blocks(node, from_slot, to_slot);
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get blocks. Error:" << error;
+        return QStringLiteral("Error: Failed to get blocks: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    const OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        qWarning() << "Failed to free blocks string. Error:" << free_status;
+    }
+    return result;
+}
+
+QString LogosBlockchainModule::get_transaction(const QString& tx_hash_hex) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray bytes = parse_address_hex(tx_hash_hex);
+    if (bytes.isEmpty() || bytes.size() != ADDRESS_BYTES) {
+        return QStringLiteral("Error: Transaction hash must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_transaction(node, reinterpret_cast<const TxHash*>(bytes.constData()));
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get transaction. Error:" << error;
+        return QStringLiteral("Error: Failed to get transaction: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    const OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        qWarning() << "Failed to free transaction string. Error:" << free_status;
+    }
+    return result;
+}
+
+// Cryptarchia
+
+QString LogosBlockchainModule::get_cryptarchia_info() {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    auto [value, error] = ::get_cryptarchia_info(node);
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get cryptarchia info. Error:" << error;
+        return QStringLiteral("Error: Failed to get cryptarchia info: ") + QString::number(error);
+    }
+
+    QJsonObject obj;
+    obj[QStringLiteral("lib")] =
+        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->lib), ADDRESS_BYTES).toHex());
+    obj[QStringLiteral("tip")] =
+        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->tip), ADDRESS_BYTES).toHex());
+    obj[QStringLiteral("slot")] = static_cast<qint64>(value->slot);
+    obj[QStringLiteral("height")] = static_cast<qint64>(value->height);
+    obj[QStringLiteral("mode")] =
+        (value->mode == State::Online) ? QStringLiteral("Online") : QStringLiteral("Bootstrapping");
+
+    const OperationStatus free_status = free_cryptarchia_info(value);
+    if (!is_ok(&free_status)) {
+        qWarning() << "Failed to free cryptarchia info. Error:" << free_status;
+    }
+    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+}
+
+void LogosBlockchainModule::emit_event(const QString& event_name, const QVariantList& data) {
     if (!logosAPI) {
-        qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << eventName;
+        qWarning() << "LogosBlockchainModule: LogosAPI not available, cannot emit" << event_name;
         return;
     }
     if (!client) {
-        qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client for event" << eventName;
+        qWarning() << "LogosBlockchainModule: Failed to get liblogos_blockchain_module client for event" << event_name;
         return;
     }
-    client->onEventResponse(this, eventName, data);
+    client->onEventResponse(this, event_name, data);
 }

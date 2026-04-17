@@ -25,42 +25,50 @@ public:
     [[nodiscard]] QString version() const override;
     Q_INVOKABLE void initLogos(LogosAPI*) override;
 
-    // Logos Blockchain
+    // ---- Node ----
+
+    // Lifecycle
     Q_INVOKABLE int generate_user_config(const QVariantMap& args) override;
     Q_INVOKABLE int generate_user_config_from_str(const QString& args) override;
     Q_INVOKABLE int start(const QString& config_path, const QString& deployment) override;
     Q_INVOKABLE int stop() override;
-    Q_INVOKABLE QString wallet_get_balance(const QString& addressHex) override;
+
+    // Wallet
+    Q_INVOKABLE QString wallet_get_balance(const QString& address_hex) override;
     Q_INVOKABLE QString wallet_transfer_funds(
-        const QString& changePublicKey,
-        const QStringList& senderAddresses,
-        const QString& recipientAddress,
+        const QString& change_public_key,
+        const QStringList& sender_addresses,
+        const QString& recipient_address,
         const QString& amount,
-        const QString& optionalTipHex
+        const QString& optional_tip_hex
     ) override;
     Q_INVOKABLE QString wallet_transfer_funds(
-        const QString& changePublicKey,
-        const QString& senderAddress,
-        const QString& recipientAddress,
+        const QString& change_public_key,
+        const QString& sender_address,
+        const QString& recipient_address,
         const QString& amount,
-        const QString& optionalTipHex
+        const QString& optional_tip_hex
     );
     Q_INVOKABLE QStringList wallet_get_known_addresses() override;
-    Q_INVOKABLE int blend_join_as_core_node(
-        const QString& providerIdHex,
-        const QString& zkIdHex,
-        const QString& lockedNoteIdHex,
+
+    // Blend
+    Q_INVOKABLE QString blend_join_as_core_node(
+        const QString& provider_id_hex,
+        const QString& zk_id_hex,
+        const QString& locked_note_id_hex,
         const QStringList& locators
     ) override;
 
     // Explorer
-    Q_INVOKABLE QString get_block(const QString& headerIdHex) override;
-    Q_INVOKABLE QString get_blocks(quint64 fromSlot, quint64 toSlot) override;
-    Q_INVOKABLE QString get_transaction(const QString& txHashHex) override;
+    Q_INVOKABLE QString get_block(const QString& header_id_hex) override;
+    Q_INVOKABLE QString get_blocks(quint64 from_slot, quint64 to_slot) override;
+    Q_INVOKABLE QString get_transaction(const QString& tx_hash_hex) override;
+
+    // Cryptarchia
     Q_INVOKABLE QString get_cryptarchia_info() override;
 
 signals:
-    void eventResponse(const QString& eventName, const QVariantList& data);
+    void eventResponse(const QString& event_name, const QVariantList& data);
 
 private:
     LogosBlockchainNode* node = nullptr;
@@ -70,8 +78,8 @@ private:
     static LogosBlockchainModule* s_instance;
 
     // C-compatible callback function
-    static void onNewBlockCallback(const char* block);
+    static void on_new_block_callback(const char* block);
 
     // Helper method for emitting events
-    void emitEvent(const QString& eventName, const QVariantList& data);
+    void emit_event(const QString& event_name, const QVariantList& data);
 };
