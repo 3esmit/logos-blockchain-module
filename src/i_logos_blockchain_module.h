@@ -31,6 +31,12 @@ public:
         const QString& lockedNoteIdHex,
         const QStringList& locators
     ) = 0;
+
+    // Explorer
+    virtual QString get_block(const QString& headerIdHex) = 0;
+    virtual QString get_blocks(quint64 fromSlot, quint64 toSlot) = 0;
+    virtual QString get_transaction(const QString& txHashHex) = 0;
+    virtual QString get_cryptarchia_info() = 0;
 };
 
 #define ILogosBlockchainModule_iid "org.logos.ilogosblockchainmodule"

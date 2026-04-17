@@ -53,6 +53,12 @@ public:
         const QStringList& locators
     ) override;
 
+    // Explorer
+    Q_INVOKABLE QString get_block(const QString& headerIdHex) override;
+    Q_INVOKABLE QString get_blocks(quint64 fromSlot, quint64 toSlot) override;
+    Q_INVOKABLE QString get_transaction(const QString& txHashHex) override;
+    Q_INVOKABLE QString get_cryptarchia_info() override;
+
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 

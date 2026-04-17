@@ -2,6 +2,8 @@
 #include "logos_api_client.h"
 #include <QByteArray>
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QVariant>
 
 // Define static member
@@ -74,13 +76,14 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
     }
 
     // Set LOGOS_BLOCKCHAIN_CIRCUITS env variable (use QDir for correct path separator on all platforms)
-    QString circuits_path = QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
+    const QString circuits_path =
+        QDir(logosAPI->property("modulePath").toString()).filePath(QStringLiteral("circuits"));
     qputenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_path.toUtf8());
     qInfo() << "LOGOS_BLOCKCHAIN_CIRCUITS set to:" << circuits_path;
     QString effective_config_path = config_path;
 
     if (effective_config_path.isEmpty()) {
-        const char* env = std::getenv("LB_CONFIG_PATH");
+        const char* env = std::getenv("LB_CONFIG_PATH"); // NOLINT: Move definition to if-statement
         if (env && *env) {
             effective_config_path = QString::fromUtf8(env);
             qInfo() << "Using config from LB_CONFIG_PATH:" << effective_config_path;
@@ -146,7 +149,7 @@ QString LogosBlockchainModule::wallet_get_balance(const QString& addressHex) {
         return QStringLiteral("Error: The node is not running.");
     }
 
-    QByteArray bytes = parseAddressHex(addressHex);
+    const QByteArray bytes = parseAddressHex(addressHex);
     if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
         return QStringLiteral("Error: Address must be 64 hex characters (32 bytes).");
     }
@@ -176,11 +179,11 @@ QString LogosBlockchainModule::wallet_transfer_funds(
         return QStringLiteral("Error: Invalid amount (positive integer required).");
     }
 
-    QByteArray changeBytes = parseAddressHex(changePublicKey);
+    const QByteArray changeBytes = parseAddressHex(changePublicKey);
     if (changeBytes.isEmpty() || changeBytes.size() != kAddressBytes) {
         return QStringLiteral("Error: Invalid changePublicKey (64 hex characters required).");
     }
-    QByteArray recipientBytes = parseAddressHex(recipientAddress);
+    const QByteArray recipientBytes = parseAddressHex(recipientAddress);
     if (recipientBytes.isEmpty() || recipientBytes.size() != kAddressBytes) {
         return QStringLiteral("Error: Invalid recipientAddress (64 hex characters required).");
     }
@@ -199,7 +202,7 @@ QString LogosBlockchainModule::wallet_transfer_funds(
     for (const QByteArray& b : fundingBytes)
         fundingPtrs.append(reinterpret_cast<const uint8_t*>(b.constData()));
 
-    QByteArray tipBytes;
+    QByteArray tipBytes; // NOLINT: Needs to be outside of scope for lifetime
     const HeaderId* optional_tip = nullptr;
     if (!optionalTipHex.isEmpty()) {
         tipBytes = parseAddressHex(optionalTipHex);
@@ -219,10 +222,10 @@ QString LogosBlockchainModule::wallet_transfer_funds(
 
     auto [value, error] = transfer_funds(node, &args);
     if (!is_ok(&error)) {
-        return QStringLiteral("Error: Failed to transfer funds: ") + QString::number(static_cast<int>(error));
+        return QStringLiteral("Error: Failed to transfer funds: ") + QString::number(error);
     }
     // value is Hash (32 bytes); convert to hex string
-    QByteArray hashBytes(reinterpret_cast<const char*>(&value), kAddressBytes);
+    const QByteArray hashBytes(reinterpret_cast<const char*>(&value), kAddressBytes);
     return QString::fromUtf8(hashBytes.toHex());
 }
 
@@ -249,7 +252,7 @@ QStringList LogosBlockchainModule::wallet_get_known_addresses() {
     }
     // Each address is kAddressBytes (32) byte
     for (size_t i = 0; i < value.len; ++i) {
-        const uint8_t* ptr = value.addresses[i];
+        const uint8_t* ptr = value.addresses[i]; // NOLINT: Move definition to if-statement
         if (ptr) {
             QByteArray addr(reinterpret_cast<const char*>(ptr), kAddressBytes);
             out.append(QString::fromUtf8(addr.toHex()));
@@ -272,19 +275,19 @@ int LogosBlockchainModule::blend_join_as_core_node(
         return 1;
     }
 
-    QByteArray providerIdBytes = parseAddressHex(providerIdHex);
+    const QByteArray providerIdBytes = parseAddressHex(providerIdHex);
     if (providerIdBytes.isEmpty() || providerIdBytes.size() != kAddressBytes) {
         qCritical() << "blend_join_as_core_node: Invalid providerId (64 hex characters required).";
         return 2;
     }
 
-    QByteArray zkIdBytes = parseAddressHex(zkIdHex);
+    const QByteArray zkIdBytes = parseAddressHex(zkIdHex);
     if (zkIdBytes.isEmpty() || zkIdBytes.size() != kAddressBytes) {
         qCritical() << "blend_join_as_core_node: Invalid zkId (64 hex characters required).";
         return 3;
     }
 
-    QByteArray lockedNoteIdBytes = parseAddressHex(lockedNoteIdHex);
+    const QByteArray lockedNoteIdBytes = parseAddressHex(lockedNoteIdHex);
     if (lockedNoteIdBytes.isEmpty() || lockedNoteIdBytes.size() != kAddressBytes) {
         qCritical() << "blend_join_as_core_node: Invalid lockedNoteId (64 hex characters required).";
         return 4;
@@ -315,9 +318,92 @@ int LogosBlockchainModule::blend_join_as_core_node(
         return 5;
     }
 
-    QByteArray declarationIdBytes(reinterpret_cast<const char*>(&value), sizeof(value));
+    const QByteArray declarationIdBytes(reinterpret_cast<const char*>(&value), sizeof(value));
     qInfo() << "Successfully joined as core node. DeclarationId:" << declarationIdBytes.toHex();
     return 0;
+}
+
+QString LogosBlockchainModule::get_block(const QString& headerIdHex) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray bytes = parseAddressHex(headerIdHex);
+    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
+        return QStringLiteral("Error: Header ID must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_block(node, reinterpret_cast<const HeaderId*>(bytes.constData()));
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get block. Error:" << error;
+        return QStringLiteral("Error: Failed to get block: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    free_cstring(value);
+    return result;
+}
+
+QString LogosBlockchainModule::get_transaction(const QString& txHashHex) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    const QByteArray bytes = parseAddressHex(txHashHex);
+    if (bytes.isEmpty() || bytes.size() != kAddressBytes) {
+        return QStringLiteral("Error: Transaction hash must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_transaction(node, reinterpret_cast<const TxHash*>(bytes.constData()));
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get transaction. Error:" << error;
+        return QStringLiteral("Error: Failed to get transaction: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    free_cstring(value);
+    return result;
+}
+
+QString LogosBlockchainModule::get_blocks(const quint64 fromSlot, const quint64 toSlot) {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    auto [value, error] = ::get_blocks(node, fromSlot, toSlot);
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get blocks. Error:" << error;
+        return QStringLiteral("Error: Failed to get blocks: ") + QString::number(error);
+    }
+
+    const QString result = QString::fromUtf8(value);
+    free_cstring(value);
+    return result;
+}
+
+QString LogosBlockchainModule::get_cryptarchia_info() {
+    if (!node) {
+        return QStringLiteral("Error: The node is not running.");
+    }
+
+    auto [value, error] = ::get_cryptarchia_info(node);
+    if (!is_ok(&error)) {
+        qWarning() << "Failed to get cryptarchia info. Error:" << error;
+        return QStringLiteral("Error: Failed to get cryptarchia info: ") + QString::number(error);
+    }
+
+    QJsonObject obj;
+    obj[QStringLiteral("lib")] =
+        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->lib), kAddressBytes).toHex());
+    obj[QStringLiteral("tip")] =
+        QString::fromUtf8(QByteArray(reinterpret_cast<const char*>(value->tip), kAddressBytes).toHex());
+    obj[QStringLiteral("slot")] = static_cast<qint64>(value->slot);
+    obj[QStringLiteral("height")] = static_cast<qint64>(value->height);
+    obj[QStringLiteral("mode")] =
+        (value->mode == State::Online) ? QStringLiteral("Online") : QStringLiteral("Bootstrapping");
+
+    free_cryptarchia_info(value);
+    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
 namespace {
@@ -333,16 +419,14 @@ namespace {
         QByteArray external_address_data;
         bool no_public_ip_check_val;
         QByteArray custom_deployment_config_path_data;
-        Deployment deployment_val;
+        Deployment deployment_val{};
         QByteArray state_path_data;
 
         // The FFI struct with pointers into owned data
-        GenerateConfigArgs ffi_args;
+        GenerateConfigArgs ffi_args{};
 
         // Constructor that populates both owned data and FFI struct
         explicit OwnedGenerateConfigArgs(const QVariantMap& args) {
-            ffi_args = {};
-
             // initial_peers (QStringList -> const char**)
             if (args.contains("initial_peers")) {
                 QStringList peers = args["initial_peers"].toStringList();
@@ -414,11 +498,12 @@ namespace {
             // Expected format: { "deployment": { "well_known_deployment": "devnet" } }
             //              OR: { "deployment": { "config_path": "/path/to/config" } }
             if (args.contains("deployment")) {
-                QVariantMap deployment = args["deployment"].toMap();
+                const QVariantMap deployment = args["deployment"].toMap(); // NOLINT: Move definition to if-statement
 
                 if (deployment.contains("well_known_deployment")) {
                     deployment_val.deployment_type = DeploymentType::WellKnown;
-                    QString wellknown = deployment["well_known_deployment"].toString();
+                    const QString wellknown =
+                        deployment["well_known_deployment"].toString(); // NOLINT: Move definition to if-statement
                     if (wellknown == "devnet") {
                         deployment_val.well_known_deployment = WellKnownDeployment::Devnet;
                     }
