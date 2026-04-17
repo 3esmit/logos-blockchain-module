@@ -46,6 +46,12 @@ public:
         const QString& optionalTipHex
     );
     Q_INVOKABLE QStringList wallet_get_known_addresses() override;
+    Q_INVOKABLE int blend_join_as_core_node(
+        const QString& providerIdHex,
+        const QString& zkIdHex,
+        const QString& lockedNoteIdHex,
+        const QStringList& locators
+    ) override;
 
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);

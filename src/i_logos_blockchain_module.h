@@ -25,6 +25,12 @@ public:
         const QString& optionalTipHex
     ) = 0;
     virtual QStringList wallet_get_known_addresses() = 0;
+    virtual int blend_join_as_core_node(
+        const QString& providerIdHex,
+        const QString& zkIdHex,
+        const QString& lockedNoteIdHex,
+        const QStringList& locators
+    ) = 0;
 };
 
 #define ILogosBlockchainModule_iid "org.logos.ilogosblockchainmodule"

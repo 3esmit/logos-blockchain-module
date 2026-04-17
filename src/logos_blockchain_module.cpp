@@ -261,6 +261,65 @@ QStringList LogosBlockchainModule::wallet_get_known_addresses() {
     return out;
 }
 
+int LogosBlockchainModule::blend_join_as_core_node(
+    const QString& providerIdHex,
+    const QString& zkIdHex,
+    const QString& lockedNoteIdHex,
+    const QStringList& locators
+) {
+    if (!node) {
+        qWarning() << "Could not execute the operation: The node is not running.";
+        return 1;
+    }
+
+    QByteArray providerIdBytes = parseAddressHex(providerIdHex);
+    if (providerIdBytes.isEmpty() || providerIdBytes.size() != kAddressBytes) {
+        qCritical() << "blend_join_as_core_node: Invalid providerId (64 hex characters required).";
+        return 2;
+    }
+
+    QByteArray zkIdBytes = parseAddressHex(zkIdHex);
+    if (zkIdBytes.isEmpty() || zkIdBytes.size() != kAddressBytes) {
+        qCritical() << "blend_join_as_core_node: Invalid zkId (64 hex characters required).";
+        return 3;
+    }
+
+    QByteArray lockedNoteIdBytes = parseAddressHex(lockedNoteIdHex);
+    if (lockedNoteIdBytes.isEmpty() || lockedNoteIdBytes.size() != kAddressBytes) {
+        qCritical() << "blend_join_as_core_node: Invalid lockedNoteId (64 hex characters required).";
+        return 4;
+    }
+
+    // QString is UTF-16, but the FFI requires UTF-8.
+    // locatorsData owns the converted buffers, while locatorsPtrs holds raw pointers into them for the FFI call.
+    // Using reserve() prevents reallocation, keeping the constData() pointers stable.
+    std::vector<QByteArray> locatorsData;
+    std::vector<const char*> locatorsPtrs;
+    locatorsData.reserve(locators.size());
+    locatorsPtrs.reserve(locators.size());
+    for (const QString& locator : locators) {
+        locatorsData.push_back(locator.toUtf8());
+        locatorsPtrs.push_back(locatorsData.back().constData());
+    }
+
+    auto [value, error] = ::blend_join_as_core_node(
+        node,
+        reinterpret_cast<const uint8_t*>(providerIdBytes.constData()),
+        reinterpret_cast<const uint8_t*>(zkIdBytes.constData()),
+        reinterpret_cast<const uint8_t*>(lockedNoteIdBytes.constData()),
+        locatorsPtrs.data(),
+        locatorsPtrs.size()
+    );
+    if (!is_ok(&error)) {
+        qCritical() << "Failed to join as core node. Error:" << error;
+        return 5;
+    }
+
+    QByteArray declarationIdBytes(reinterpret_cast<const char*>(&value), sizeof(value));
+    qInfo() << "Successfully joined as core node. DeclarationId:" << declarationIdBytes.toHex();
+    return 0;
+}
+
 namespace {
     // Wrapper that owns data and provides GenerateConfigArgs
     struct OwnedGenerateConfigArgs {
