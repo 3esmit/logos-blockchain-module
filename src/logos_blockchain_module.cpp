@@ -4,12 +4,31 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
+#include <QMetaType>
+#include <QUrl>
 #include <QVariant>
+#include <QVariantList>
 
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
 
 namespace {
+    // Rust `File::open` / `deserialize_config_at_path` only accept real filesystem paths. QML often
+    // passes `file:///...` URLs; strip to a local path when applicable.
+    QString localPathFromFileUrl(const QString& s) {
+        if (s.isEmpty()) {
+            return s;
+        }
+        if (s.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+            const QUrl u(s);
+            if (u.isLocalFile()) {
+                return QDir::toNativeSeparators(u.toLocalFile());
+            }
+        }
+        return s;
+    }
+
     // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
     constexpr int ADDRESS_BYTES = sizeof(Hash);
     constexpr int ADDRESS_HEX_LEN = ADDRESS_BYTES * 2;
@@ -263,14 +282,14 @@ int LogosBlockchainModule::start(const QString& config_path, const QString& depl
         }
     }
 
-    qInfo() << "Starting the node with the configuration file:" << effective_config_path;
-    qInfo() << "Using deployment:" << (deployment.isEmpty() ? "<default>" : deployment);
+    effective_config_path = localPathFromFileUrl(effective_config_path);
+    const QString deployment_path = localPathFromFileUrl(deployment);
 
     const QByteArray config_path_buffer = effective_config_path.toUtf8();
     const char* config_path_ptr = effective_config_path.isEmpty() ? nullptr : config_path_buffer.constData();
 
-    const QByteArray deployment_buffer = deployment.toUtf8();
-    const char* deployment_ptr = deployment.isEmpty() ? nullptr : deployment_buffer.constData();
+    const QByteArray deployment_buffer = deployment_path.toUtf8();
+    const char* deployment_ptr = deployment_path.isEmpty() ? nullptr : deployment_buffer.constData();
 
     auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
     qInfo() << "Start node returned with value and error.";

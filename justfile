@@ -1,13 +1,13 @@
 default: build
 
+# Inside `nix develop` / `ws develop logos-blockchain-module` the module-builder
+# provides LOGOS_CPP_SDK_ROOT and LOGOS_MODULE_BUILDER_ROOT — CMake picks them
+# up automatically via the logos_module() macro, no explicit -D flags needed.
 configure:
-    cmake -S . -B build -G Ninja \
-      ${LOGOS_CORE_ROOT:+-DLOGOS_CORE_ROOT="$LOGOS_CORE_ROOT"} \
-      ${LOGOS_BLOCKCHAIN_LIB:+-DLOGOS_BLOCKCHAIN_LIB="$LOGOS_BLOCKCHAIN_LIB"} \
-      ${LOGOS_BLOCKCHAIN_INCLUDE:+-DLOGOS_BLOCKCHAIN_INCLUDE="$LOGOS_BLOCKCHAIN_INCLUDE"}
+    cmake -S . -B build -G Ninja
 
 build: configure
-    cmake --build build --parallel --target logos_blockchain_module
+    cmake --build build --parallel --target liblogos_blockchain_module_module_plugin
 
 clean:
     rm -rf build result

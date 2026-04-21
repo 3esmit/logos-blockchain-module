@@ -13,7 +13,7 @@ extern "C" {
 
 class LogosBlockchainModule final : public QObject, public PluginInterface, public ILogosBlockchainModule {
     Q_OBJECT
-    Q_PLUGIN_METADATA(IID ILogosBlockchainModule_iid FILE LOGOS_BLOCKCHAIN_MODULE_METADATA_FILE)
+    Q_PLUGIN_METADATA(IID ILogosBlockchainModule_iid FILE "metadata.json")
     Q_INTERFACES(PluginInterface)
 
 public:

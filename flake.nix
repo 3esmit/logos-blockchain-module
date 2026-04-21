@@ -2,163 +2,40 @@
   description = "Logos Blockchain Module - Qt6 Plugin";
 
   inputs = {
-    nixpkgs.follows = "logos-liblogos/nixpkgs";
-
-    logos-liblogos.url = "github:logos-co/logos-liblogos";
-    logos-core.url = "github:logos-co/logos-cpp-sdk";
-
-    #logos-blockchain.url = "github:logos-blockchain/logos-blockchain?rev=d7ff5984fa3371a89e944b163b358465a5e307ad"; # pre-0.1.3 + genesis fixes
+    logos-module-builder.url = "github:logos-co/logos-module-builder";
     logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=feat/nix/disable-testing"; # pre-0.1.3 + genesis fixes
-
-    logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      logos-core,
-      logos-blockchain,
-      logos-module-viewer,
-      ...
-    }:
-    let
-      lib = nixpkgs.lib;
+  outputs = inputs@{ logos-module-builder, ... }:
+    logos-module-builder.lib.mkLogosModule {
+      src = ./.;
+      configFile = ./metadata.json;
+      flakeInputs = inputs;
 
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
+      externalLibInputs = {
+        logos_blockchain = inputs.logos-blockchain;
+      };
 
-      forAll = lib.genAttrs systems;
+      preConfigure = { externalLibs }: ''
+        if [ -d "${externalLibs.logos_blockchain}/circuits" ]; then
+          echo "Staging zk circuits from logos-blockchain..."
+          cp -r "${externalLibs.logos_blockchain}/circuits" ./circuits
+          chmod -R u+w ./circuits
+        else
+          echo "WARNING: no circuits/ found in logos-blockchain derivation"
+        fi
+      '';
 
-      mkPkgs = system: import nixpkgs { inherit system; };
-    in
-    {
-      packages = forAll (
-        system:
-        let
-          pkgs = mkPkgs system;
-          llvmPkgs = pkgs.llvmPackages;
-
-          logosCore = logos-core.packages.${system}.default;
-          logosBlockchainC = logos-blockchain.packages.${system}.logos-blockchain-c;
-
-          logosBlockchainModule = pkgs.stdenv.mkDerivation {
-            pname = "logos-blockchain-module";
-            version = "dev";
-            src = ./.;
-
-            nativeBuildInputs = [
-              pkgs.cmake
-              pkgs.ninja
-              pkgs.pkg-config
-              pkgs.qt6.wrapQtAppsHook
-            ];
-
-            buildInputs = [
-              pkgs.qt6.qtbase
-              pkgs.qt6.qtremoteobjects
-              pkgs.qt6.qttools
-              llvmPkgs.clang
-              llvmPkgs.libclang
-              logosBlockchainC
-            ]
-            ++ lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.libiconv
-              pkgs.cacert
-            ];
-
-            LIBCLANG_PATH = "${llvmPkgs.libclang.lib}/lib";
-            CLANG_PATH = "${llvmPkgs.clang}/bin/clang";
-            SSL_CERT_FILE = lib.optionalString pkgs.stdenv.isDarwin "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-
-            cmakeFlags = [
-              "-DLOGOS_CORE_ROOT=${logosCore}"
-              "-DLOGOS_BLOCKCHAIN_LIB=${logosBlockchainC}/lib"
-              "-DLOGOS_BLOCKCHAIN_INCLUDE=${logosBlockchainC}/include"
-            ];
-
-            postInstall = ''
-              mkdir $out/share
-              cp -r ${logosBlockchainC}/circuits $out/share
-            '';
-
-            # Logos Core Edge-case
-            # The current version of Logos Core expects circuits' binaries under `lib/circuits/`.
-            # Until we address this in Logos Core, we use this hook to include to ensure the circuits' binaries
-            # are included in the binary bundle and avoid the circuits being mangled by Nix (which did that when
-            # copying them in a previous phase).
-            postFixup = ''
-              cp -r ${logosBlockchainC}/circuits $out/lib/circuits
-            '';
-        };
-        in
-        {
-          lib = logosBlockchainModule;
-          default = logosBlockchainModule;
-        }
-      );
-
-      apps = forAll (
-        system:
-        let
-          pkgs = mkPkgs system;
-          logosBlockchainModuleLib = self.packages.${system}.lib;
-          logosModuleViewer = logos-module-viewer.packages.${system}.default;
-          extension = if pkgs.stdenv.isDarwin then "dylib"
-            else if pkgs.stdenv.hostPlatform.isWindows then "dll"
-            else "so";
-          inspectModule = {
-            type = "app";
-            program =
-              "${pkgs.writeShellScriptBin "inspect-module" ''
-                exec ${logosModuleViewer}/bin/logos-module-viewer \
-                  --module ${logosBlockchainModuleLib}/lib/liblogos_blockchain_module.${extension}
-              ''}/bin/inspect-module";
-          };
-        in
-        {
-          inspect-module = inspectModule;
-          default = inspectModule;
-        }
-      );
-
-      devShells = forAll (
-        system:
-        let
-          pkgs = mkPkgs system;
-          pkg = self.packages.${system}.default;
-          logosCore = logos-core.packages.${system}.default;
-          logosBlockchainC = logos-blockchain.packages.${system}.logos-blockchain-c;
-        in
-        {
-          default = pkgs.mkShell {
-            inputsFrom = [ pkg ];
-
-            inherit (pkg)
-              LIBCLANG_PATH
-              CLANG_PATH;
-
-            LOGOS_CORE_ROOT = "${logosCore}";
-            LOGOS_BLOCKCHAIN_LIB = "${logosBlockchainC}/lib";
-            LOGOS_BLOCKCHAIN_INCLUDE = "${logosBlockchainC}/include";
-
-            shellHook = ''
-              BLUE='\e[1;34m'
-              GREEN='\e[1;32m'
-              RESET='\e[0m'
-
-              echo -e "\n''${BLUE}=== Logos Blockchain Module Development Environment ===''${RESET}"
-              echo -e "''${GREEN}LOGOS_CORE_ROOT:''${RESET}       $LOGOS_CORE_ROOT"
-              echo -e "''${GREEN}LOGOS_BLOCKCHAIN_LIB:''${RESET}  $LOGOS_BLOCKCHAIN_LIB"
-              echo -e "''${GREEN}LOGOS_BLOCKCHAIN_INCLUDE:''${RESET} $LOGOS_BLOCKCHAIN_INCLUDE"
-              echo -e "''${BLUE}---------------------------------------------------------''${RESET}"
-            '';
-          };
-        }
-      );
+      # Logos Core Edge-case
+      # The current version of Logos Core expects circuits' binaries under `lib/circuits/`.
+      # Until we address this in Logos Core, we use this hook to include to ensure the circuits' binaries
+      # are included in the binary bundle and avoid the circuits being mangled by Nix (which did that when
+      # copying them in a previous phase).
+      postInstall = ''
+        if [ -d "$LOGOS_MODULE_SOURCE_DIR/circuits" ]; then
+          cp -r "$LOGOS_MODULE_SOURCE_DIR/circuits" "$out/lib/circuits"
+          chmod -R u+w "$out/lib/circuits"
+        fi
+      '';
     };
 }
