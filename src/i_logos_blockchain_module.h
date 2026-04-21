@@ -2,7 +2,7 @@
 #define I_LOGOS_BLOCKCHAIN_MODULE_API_H
 
 #include <QString>
-#include <core/interface.h>
+#include "interface.h"
 
 class ILogosBlockchainModule {
 public:
