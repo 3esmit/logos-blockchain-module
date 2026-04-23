@@ -7,7 +7,7 @@
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-core.url = "github:logos-co/logos-cpp-sdk";
 
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?rev=86e3e86f78bc3a7219b1f1d169f31854dbb7344b"; # v0.2.1 + new FFIs
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?rev=e71c4150ba2d01f61cade4b06ab54ce42756e17c"; # pre-0.1.3 + explicit handle parameter
 
     logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };
