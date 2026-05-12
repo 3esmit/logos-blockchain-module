@@ -2,11 +2,11 @@
   "nodes": {
     "crane": {
       "locked": {
-        "lastModified": 1771438068,
-        "narHash": "sha256-nGBbXvEZVe/egCPVPFcu89RFtd8Rf6J+4RFoVCFec0A=",
+        "lastModified": 1778106249,
+        "narHash": "sha256-cM/AuKy5tMhwOOQIbha8ZRRMHVfNf7cv2aljIw+qoCg=",
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "b5090e53e9d68c523a4bb9ad42b4737ee6747597",
+        "rev": "6d015ea29630b7ad2402841386da2cb617a470a7",
         "type": "github"
       },
       "original": {
@@ -23,17 +23,17 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1777465947,
-        "narHash": "sha256-/LTHmwX94D3D1zNuRk6tWb8rUSr85/DxdXwG0y9FWfY=",
+        "lastModified": 1778535405,
+        "narHash": "sha256-Far4WvK2WvFXt8/grt5yA6WJi6g2QyNPFtycAVF2WXc=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain",
-        "rev": "88941ff33f2e028591b9d0ed2549a328d54f0cfa",
+        "rev": "0345882234b0e42b0c2fb847d7c6f89af48048ef",
         "type": "github"
       },
       "original": {
         "owner": "logos-blockchain",
+        "ref": "feat/nix/disable-testing",
         "repo": "logos-blockchain",
-        "rev": "88941ff33f2e028591b9d0ed2549a328d54f0cfa",
         "type": "github"
       }
     },
@@ -42,11 +42,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1770979891,
-        "narHash": "sha256-cvkVnE7btuFLzv70ORAZve9K1Huiplq0iECgXSXb0ZY=",
+        "lastModified": 1775835011,
+        "narHash": "sha256-SQDLyyRUa5J9QHjNiHbeZw4rQOZnTEo61TcaUpjtLBs=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain-circuits",
-        "rev": "ec7d298e5a3a0507bb8570df86cdf78dc452d024",
+        "rev": "d6cf41f66500d4afc157b4f43de0f0d5bfa01443",
         "type": "github"
       },
       "original": {
@@ -1241,11 +1241,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1771369470,
-        "narHash": "sha256-0NBlEBKkN3lufyvFegY4TYv5mCNHbi5OmBDrzihbBMQ=",
+        "lastModified": 1777954456,
+        "narHash": "sha256-hGdgeU2Nk87RAuZyYjyDjFL6LK7dAZN5RE9+hrDTkDU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "0182a361324364ae3f436a63005877674cf45efb",
+        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
         "type": "github"
       },
       "original": {

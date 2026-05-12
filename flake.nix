@@ -7,7 +7,8 @@
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-core.url = "github:logos-co/logos-cpp-sdk";
 
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?rev=88941ff33f2e028591b9d0ed2549a328d54f0cfa"; # pre-0.1.3 + potential note fixes
+    #logos-blockchain.url = "github:logos-blockchain/logos-blockchain?rev=d7ff5984fa3371a89e944b163b358465a5e307ad"; # pre-0.1.3 + genesis fixes
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=feat/nix/disable-testing"; # pre-0.1.3 + genesis fixes
 
     logos-module-viewer.url = "github:logos-co/logos-module-viewer";
   };

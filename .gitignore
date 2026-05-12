@@ -11,6 +11,7 @@ result
 
 # Node
 resources/
+state/
 
 # AI
 .codex
