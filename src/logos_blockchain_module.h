@@ -1,8 +1,10 @@
 #pragma once
 
-#include "i_logos_blockchain_module.h"
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
 
-#include <iostream>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,75 +13,56 @@ extern "C" {
 }
 #endif
 
-class LogosBlockchainModule final : public QObject, public PluginInterface, public ILogosBlockchainModule {
-    Q_OBJECT
-    Q_PLUGIN_METADATA(IID ILogosBlockchainModule_iid FILE LOGOS_BLOCKCHAIN_MODULE_METADATA_FILE)
-    Q_INTERFACES(PluginInterface)
-
+class LogosBlockchainModule {
 public:
     LogosBlockchainModule();
-    ~LogosBlockchainModule() override;
+    ~LogosBlockchainModule();
 
-    // Logos Core
-    [[nodiscard]] QString name() const override;
-    [[nodiscard]] QString version() const override;
-    Q_INVOKABLE void initLogos(LogosAPI*) override;
+    // Wired automatically by the generated glue layer.
+    // Call this to emit named events to other modules / the host application.
+    // Data is a JSON-encoded string (object or array).
+    std::function<void(const std::string& eventName, const std::string& data)> emitEvent;
 
     // ---- Node ----
 
     // Lifecycle
-    Q_INVOKABLE int generate_user_config(const QVariantMap& args) override;
-    Q_INVOKABLE int generate_user_config_from_str(const QString& args) override;
-    Q_INVOKABLE int start(const QString& config_path, const QString& deployment) override;
-    Q_INVOKABLE int stop() override;
+    int generate_user_config(const std::string& json_args);
+    int start(const std::string& config_path, const std::string& deployment);
+    int stop();
 
     // Wallet
-    Q_INVOKABLE QString wallet_get_balance(const QString& address_hex) override;
-    Q_INVOKABLE QString wallet_transfer_funds(
-        const QString& change_public_key,
-        const QStringList& sender_addresses,
-        const QString& recipient_address,
-        const QString& amount,
-        const QString& optional_tip_hex
-    ) override;
-    Q_INVOKABLE QString wallet_transfer_funds(
-        const QString& change_public_key,
-        const QString& sender_address,
-        const QString& recipient_address,
-        const QString& amount,
-        const QString& optional_tip_hex
+    std::string wallet_get_balance(const std::string& address_hex);
+    std::string wallet_transfer_funds(
+        const std::string& change_public_key,
+        const std::vector<std::string>& sender_addresses,
+        const std::string& recipient_address,
+        const std::string& amount,
+        const std::string& optional_tip_hex
     );
-    Q_INVOKABLE QStringList wallet_get_known_addresses() override;
+    std::vector<std::string> wallet_get_known_addresses();
 
     // Blend
-    Q_INVOKABLE QString blend_join_as_core_node(
-        const QString& provider_id_hex,
-        const QString& zk_id_hex,
-        const QString& locked_note_id_hex,
-        const QStringList& locators
-    ) override;
+    std::string blend_join_as_core_node(
+        const std::string& provider_id_hex,
+        const std::string& zk_id_hex,
+        const std::string& locked_note_id_hex,
+        const std::vector<std::string>& locators
+    );
 
     // Explorer
-    Q_INVOKABLE QString get_block(const QString& header_id_hex) override;
-    Q_INVOKABLE QString get_blocks(quint64 from_slot, quint64 to_slot) override;
-    Q_INVOKABLE QString get_transaction(const QString& tx_hash_hex) override;
+    std::string get_block(const std::string& header_id_hex);
+    std::string get_blocks(uint64_t from_slot, uint64_t to_slot);
+    std::string get_transaction(const std::string& tx_hash_hex);
 
     // Cryptarchia
-    Q_INVOKABLE QString get_cryptarchia_info() override;
-
-signals:
-    void eventResponse(const QString& event_name, const QVariantList& data);
+    std::string get_cryptarchia_info();
 
 private:
     LogosBlockchainNode* node = nullptr;
-    LogosAPIClient* client = nullptr;
 
     // Static instance for C callback (C API doesn't support user data)
     static LogosBlockchainModule* s_instance;
 
     // C-compatible callback function
     static void on_new_block_callback(const char* block);
-
-    // Helper method for emitting events
-    void emit_event(const QString& event_name, const QVariantList& data);
 };

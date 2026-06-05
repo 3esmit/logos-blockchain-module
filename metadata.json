@@ -4,17 +4,35 @@
   "description": "Logos blockchain node for logos-core",
   "author": "Logos Blockchain Team",
   "type": "core",
+  "interface": "universal",
+  "codegen": {
+    "impl_header": "logos_blockchain_module.h",
+    "impl_class": "LogosBlockchainModule"
+  },
   "category": "blockchain",
-  "main": "liblogos_blockchain_module",
+  "main": "liblogos_blockchain_module_plugin",
   "dependencies": [],
   "capabilities": [],
   "include": [
     "liblogos_blockchain.dylib",
     "liblogos_blockchain.so",
     "liblogos_blockchain.dll",
-    "liblogos_blockchain_module.dylib",
-    "liblogos_blockchain_module.so",
-    "liblogos_blockchain_module.dll",
+    "liblogos_blockchain_module_plugin.dylib",
+    "liblogos_blockchain_module_plugin.so",
+    "liblogos_blockchain_module_plugin.dll",
     "circuits"
-  ]
+  ],
+
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": ["nlohmann_json", "boost"]
+    },
+    "external_libraries": [
+      { "name": "logos_blockchain" }
+    ],
+    "cmake": {
+      "extra_include_dirs": ["lib"]
+    }
+  }
 }
