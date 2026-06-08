@@ -3,7 +3,7 @@
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=feat/nix/disable-testing"; # pre-0.1.3 + genesis fixes
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=0.1.3-rc.9";
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
