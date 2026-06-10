@@ -3,7 +3,7 @@
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=0.1.3-rc.9";
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=feddb4616512bf7954b503d8de4287d2ed59c4ba"; # v0.1.3-rc.10-compatible + rust-rapidsnark nix fixes
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
@@ -21,15 +21,18 @@
         mockCLibs = [ "logos_blockchain" ];
       };
 
-      preConfigure = { externalLibs }: ''
-        if [ -d "${externalLibs.logos_blockchain}/circuits" ]; then
-          echo "Staging zk circuits from logos-blockchain..."
-          cp -r "${externalLibs.logos_blockchain}/circuits" ./circuits
-          chmod -R u+w ./circuits
-        else
-          echo "WARNING: no circuits/ found in logos-blockchain derivation"
-        fi
-      '';
+      preConfigure = { externalLibs }:
+        if externalLibs ? logos_blockchain then ''
+          if [ -d "${externalLibs.logos_blockchain}/circuits" ]; then
+            echo "Staging zk circuits from logos-blockchain..."
+            cp -r "${externalLibs.logos_blockchain}/circuits" ./circuits
+            chmod -R u+w ./circuits
+          else
+            echo "WARNING: no circuits/ found in logos-blockchain derivation"
+          fi
+        '' else ''
+          echo "Skipping zk circuits staging (logos_blockchain mocked for tests)"
+        '';
 
       # Logos Core Edge-case
       # The current version of Logos Core expects circuits' binaries under `lib/circuits/`.
