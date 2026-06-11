@@ -43,7 +43,25 @@
         if [ -d "$LOGOS_MODULE_SOURCE_DIR/circuits" ]; then
           cp -r "$LOGOS_MODULE_SOURCE_DIR/circuits" "$out/lib/circuits"
           chmod -R u+w "$out/lib/circuits"
+
+          if [ -f "$out/lib/circuits/lib/libgmp.a" ]; then
+            echo "Removing loose static library libgmp.a from staged circuits..."
+            rm "$out/lib/circuits/lib/libgmp.a"
+          fi
         fi
+
+        # Remove nix references to make the module portable.
+        find "$out" -type f | while read -r binary; do
+          if file "$binary" | grep -E -q "Mach-O|shared library|executable|archive"; then
+            echo "Scrubbing references inside verified target: $binary"
+            chmod +w "$binary" 2>/dev/null || true
+
+            perl -pi -e 's|/nix/store/[a-z0-9]{32}-boost|/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-boost|g' "$binary" 2>/dev/null || true
+            perl -pi -e 's|/nix/store/[a-z0-9]{32}-nlohmann_json|/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-nlohmann_json|g' "$binary" 2>/dev/null || true
+            perl -pi -e 's|/nix/store/[a-z0-9]{32}-vendor-cargo-deps|/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-vendor-cargo-deps|g' "$binary" 2>/dev/null || true
+            perl -pi -e 's|/nix/var/nix/b/[a-z0-9]{26}/|/tmp/eeeeeeeeeeeeeeeeeeeeeeeeee/|g' "$binary" 2>/dev/null || true
+          fi
+        done
       '';
     };
 }
