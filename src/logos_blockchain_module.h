@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <vector>
+
+#include <logos_module_context.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,15 +14,10 @@ extern "C" {
 }
 #endif
 
-class LogosBlockchainModule {
+class LogosBlockchainModule : public LogosModuleContext {
 public:
     LogosBlockchainModule();
     ~LogosBlockchainModule();
-
-    // Wired automatically by the generated glue layer.
-    // Call this to emit named events to other modules / the host application.
-    // Data is a JSON-encoded string (object or array).
-    std::function<void(const std::string& eventName, const std::string& data)> emitEvent;
 
     // ---- Node ----
 
@@ -56,6 +52,11 @@ public:
 
     // Cryptarchia
     std::string get_cryptarchia_info();
+
+logos_events:
+    // Fired by on_new_block_callback when the Rust node delivers a new block.
+    // blockJson is the full block serialized as JSON.
+    void newBlock(const std::string& blockJson);
 
 private:
     LogosBlockchainNode* node = nullptr;

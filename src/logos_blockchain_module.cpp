@@ -205,8 +205,7 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
         fprintf(stderr, "Received new block: %s\n", block);
         json j;
         j["block"] = std::string(block);
-        if (s_instance->emitEvent)
-            s_instance->emitEvent("newBlock", j.dump());
+        s_instance->newBlock(j.dump());
         // SAFETY:
         // We are getting an owned pointer here which is freed after this callback is called, so there is no need to
         // free the resource here as we are copying the data!
