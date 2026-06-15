@@ -83,6 +83,7 @@ typedef struct {
 typedef struct { LogosBlockchainNode* value; OperationStatus error; } NodeResult;
 typedef struct { uint64_t value; OperationStatus error; } BalanceResult;
 typedef struct { Hash value; OperationStatus error; } TransferHashResult;
+typedef struct { TxHash value; OperationStatus error; } FfiLeaderClaimResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
@@ -136,6 +137,7 @@ StringResult get_peer_id(const char* config_path);
 // Wallet
 BalanceResult get_balance(LogosBlockchainNode* node, const uint8_t* address, const void* reserved);
 TransferHashResult transfer_funds(LogosBlockchainNode* node, const TransferFundsArguments* args);
+FfiLeaderClaimResult leader_claim(LogosBlockchainNode* node);
 KnownAddressesResult get_known_addresses(LogosBlockchainNode* node);
 OperationStatus free_known_addresses(KnownAddresses addrs);
 

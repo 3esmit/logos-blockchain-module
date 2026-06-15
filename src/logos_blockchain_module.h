@@ -75,6 +75,7 @@ public:
         const std::string& optional_tip_hex
     );
     std::vector<std::string> wallet_get_known_addresses();
+    std::string leader_claim();
 
     // Blend
     std::string blend_join_as_core_node(

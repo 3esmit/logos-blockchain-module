@@ -147,6 +147,14 @@ LOGOS_TEST(wallet_transfer_funds_without_node_returns_error) {
     LOGOS_ASSERT_TRUE(contains(result, "not running"));
 }
 
+LOGOS_TEST(leader_claim_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    std::string result = module.leader_claim();
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "not running"));
+}
+
 LOGOS_TEST(wallet_get_known_addresses_without_node_returns_empty) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
@@ -493,6 +501,36 @@ LOGOS_TEST(wallet_transfer_funds_returns_error_on_ffi_failure) {
 
     std::string result = module->wallet_transfer_funds(VALID_HEX, {VALID_HEX}, VALID_HEX, "100", "");
     LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    delete module;
+}
+
+LOGOS_TEST(leader_claim_returns_tx_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("leader_claim_error").returns(0);
+
+    std::string result = module->leader_claim();
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_EQ(static_cast<int>(result.length()), 64);
+    LOGOS_ASSERT_TRUE(starts_with(result, "ef"));
+    LOGOS_ASSERT(t.cFunctionCalled("leader_claim"));
+    delete module;
+}
+
+LOGOS_TEST(leader_claim_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("leader_claim_error").returns(1);
+
+    std::string result = module->leader_claim();
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "Failed to claim leader rewards"));
     delete module;
 }
 

@@ -3,8 +3,8 @@
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";
-    # v0.1.3-rc.10-compatible + rust-rapidsnark nix fixes + cli commands
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=86e24cfd985b6341e96bba76ecad36ff379bd243";
+    # v0.1.3-rc.10-compatible + rust-rapidsnark nix fixes + cli commands + leader_claim C binding
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=4efdf816e2a3d1447096c3f64c9e230769eb4ecb";
   };
 
   outputs = inputs@{ logos-module-builder, ... }:

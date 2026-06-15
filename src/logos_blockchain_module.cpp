@@ -29,6 +29,7 @@ namespace {
 
     // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
     constexpr int ADDRESS_BYTES = sizeof(Hash);
+    constexpr int TX_HASH_BYTES = sizeof(TxHash);
     constexpr int ADDRESS_HEX_LEN = ADDRESS_BYTES * 2;
 
     std::vector<uint8_t> parse_address_hex(const std::string& address_hex) {
@@ -610,6 +611,19 @@ std::vector<std::string> LogosBlockchainModule::wallet_get_known_addresses() {
     fprintf(stderr, "blockchain lib: known addresses, count=%zu sample:%s\n",
             out.size(), out.empty() ? "(none)" : out.front().c_str());
     return out;
+}
+
+std::string LogosBlockchainModule::leader_claim() {
+    if (!node) {
+        return "Error: The node is not running.";
+    }
+
+    auto [value, error] = ::leader_claim(node);
+    if (!is_ok(&error)) {
+        return "Error: Failed to claim leader rewards: " + std::to_string(error);
+    }
+
+    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES);
 }
 
 // Blend

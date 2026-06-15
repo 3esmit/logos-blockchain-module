@@ -135,6 +135,14 @@ TransferHashResult transfer_funds(LogosBlockchainNode* node, const TransferFunds
     return result;
 }
 
+FfiLeaderClaimResult leader_claim(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("leader_claim");
+    FfiLeaderClaimResult result;
+    memset(result.value, 0xEF, sizeof(TxHash));
+    result.error = LOGOS_CMOCK_RETURN(int, "leader_claim_error");
+    return result;
+}
+
 KnownAddressesResult get_known_addresses(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("get_known_addresses");
     KnownAddressesResult result;
