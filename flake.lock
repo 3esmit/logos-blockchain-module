@@ -24,16 +24,16 @@
         "rust-rapidsnark": "rust-rapidsnark"
       },
       "locked": {
-        "lastModified": 1781108021,
-        "narHash": "sha256-YOJR3TMNHgQedoN7ftga+EP3VzWkCVMW59xYTAMF/pU=",
+        "lastModified": 1781288172,
+        "narHash": "sha256-4anGBb7slL6WfMCGlI4BmLAjim7kQOMD/qv4FCPJwII=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain",
-        "rev": "feddb4616512bf7954b503d8de4287d2ed59c4ba",
+        "rev": "86e24cfd985b6341e96bba76ecad36ff379bd243",
         "type": "github"
       },
       "original": {
         "owner": "logos-blockchain",
-        "ref": "feddb4616512bf7954b503d8de4287d2ed59c4ba",
+        "ref": "86e24cfd985b6341e96bba76ecad36ff379bd243",
         "repo": "logos-blockchain",
         "type": "github"
       }
@@ -53,6 +53,7 @@
       "original": {
         "owner": "logos-blockchain",
         "repo": "logos-blockchain-circuits",
+        "rev": "2846ee7a4cfa24458bb8063412ab2e753b344d2f",
         "type": "github"
       }
     },
@@ -6313,11 +6314,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1780749050,
-        "narHash": "sha256-3av0pIjlOWQ6rDbNOmpUSvbNnJkGORQKKjb4LtCZsIY=",
+        "lastModified": 1781074563,
+        "narHash": "sha256-md8WlXOlfnIeHeOScMTTHFyf2d6iaTwPl2apR5EQ3P4=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "a799d3e3886da994fa307f817a6bc705ae538eeb",
+        "rev": "9ae611a455b90cf061d8f332b977e387bda8e1ca",
         "type": "github"
       },
       "original": {

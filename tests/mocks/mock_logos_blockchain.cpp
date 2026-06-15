@@ -42,6 +42,78 @@ OperationStatus stop_node(LogosBlockchainNode* node) {
     return 0;
 }
 
+OperationStatus update_user_config(const char* user_config_path, const char* keystore_path) {
+    LOGOS_CMOCK_RECORD("update_user_config");
+    return LOGOS_CMOCK_RETURN(int, "update_user_config");
+}
+
+OperationStatus migrate_user_config(const char* output_path, const char* keystore_path) {
+    LOGOS_CMOCK_RECORD("migrate_user_config");
+    return LOGOS_CMOCK_RETURN(int, "migrate_user_config");
+}
+
+OperationStatus migrate_user_config_0_1_2(
+    const char* new_config_path,
+    const char* old_config_path,
+    const char* keystore_path)
+{
+    LOGOS_CMOCK_RECORD("migrate_user_config_0_1_2");
+    return LOGOS_CMOCK_RETURN(int, "migrate_user_config_0_1_2");
+}
+
+OperationStatus participate(
+    const char* config_path,
+    const char* keystore_path,
+    const char* output_dir,
+    const char* external_address)
+{
+    LOGOS_CMOCK_RECORD("participate");
+    return LOGOS_CMOCK_RETURN(int, "participate");
+}
+
+StringResult generate_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    KeyType key_type,
+    const char* key_title)
+{
+    LOGOS_CMOCK_RECORD("generate_key");
+    StringResult result;
+    const char* id = LOGOS_CMOCK_RETURN_STRING("generate_key");
+    result.value = id ? strdup(id) : nullptr;
+    result.error = LOGOS_CMOCK_RETURN(int, "generate_key_error");
+    return result;
+}
+
+OperationStatus add_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    KeyType key_type,
+    const char* key_hex,
+    const char* key_title)
+{
+    LOGOS_CMOCK_RECORD("add_key");
+    return LOGOS_CMOCK_RETURN(int, "add_key");
+}
+
+OperationStatus remove_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    const char* key_title)
+{
+    LOGOS_CMOCK_RECORD("remove_key");
+    return LOGOS_CMOCK_RETURN(int, "remove_key");
+}
+
+StringResult get_peer_id(const char* config_path) {
+    LOGOS_CMOCK_RECORD("get_peer_id");
+    StringResult result;
+    const char* id = LOGOS_CMOCK_RETURN_STRING("get_peer_id");
+    result.value = id ? strdup(id) : nullptr;
+    result.error = LOGOS_CMOCK_RETURN(int, "get_peer_id_error");
+    return result;
+}
+
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback) {
     LOGOS_CMOCK_RECORD("subscribe_to_new_blocks");
     return LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks");

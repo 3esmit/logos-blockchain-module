@@ -12,6 +12,7 @@ logos_test(
     TEST_SOURCES
         main.cpp
         test_blockchain.cpp
+        event_stubs.cpp
     MOCK_C_SOURCES
         mocks/mock_logos_blockchain.cpp
     EXTRA_INCLUDES
@@ -35,6 +36,7 @@ if(LIBLOGOS_BLOCKCHAIN_PATH)
         TEST_SOURCES
             main.cpp
             test_blockchain.cpp
+            event_stubs.cpp
         EXTRA_INCLUDES
             ../lib
         EXTRA_LINK_LIBS

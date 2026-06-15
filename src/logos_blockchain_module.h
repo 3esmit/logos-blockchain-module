@@ -26,6 +26,45 @@ public:
     int start(const std::string& config_path, const std::string& deployment);
     int stop();
 
+    // Config management
+    int update_user_config(const std::string& user_config_path, const std::string& keystore_path);
+    int migrate_user_config(const std::string& output_path, const std::string& keystore_path);
+    int migrate_user_config_0_1_2(
+        const std::string& new_config_path,
+        const std::string& old_config_path,
+        const std::string& keystore_path
+    );
+    int participate(
+        const std::string& config_path,
+        const std::string& keystore_path,
+        const std::string& output_dir,
+        const std::string& external_address
+    );
+
+    // Keystore
+    // key_type is "ed25519" or "zk". key_title may be empty (auto-generated).
+    std::string generate_key(
+        const std::string& user_config_path,
+        const std::string& keystore_path,
+        const std::string& key_type,
+        const std::string& key_title
+    );
+    int add_key(
+        const std::string& user_config_path,
+        const std::string& keystore_path,
+        const std::string& key_type,
+        const std::string& key_hex,
+        const std::string& key_title
+    );
+    int remove_key(
+        const std::string& user_config_path,
+        const std::string& keystore_path,
+        const std::string& key_title
+    );
+
+    // Identity
+    std::string get_peer_id(const std::string& config_path);
+
     // Wallet
     std::string wallet_get_balance(const std::string& address_hex);
     std::string wallet_transfer_funds(

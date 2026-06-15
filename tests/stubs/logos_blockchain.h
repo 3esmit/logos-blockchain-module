@@ -30,6 +30,9 @@ typedef enum { Devnet } WellKnownDeployment;
 // Consensus state enum
 typedef enum { Bootstrapping, Online } State;
 
+// Key type for generate_key / add_key
+typedef enum { Ed25519, Zk } KeyType;
+
 // Deployment configuration
 typedef struct {
     DeploymentType deployment_type;
@@ -96,6 +99,39 @@ OperationStatus generate_user_config(GenerateConfigArgs args);
 NodeResult start_lb_node(const char* config_path, const char* deployment);
 OperationStatus stop_node(LogosBlockchainNode* node);
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback);
+
+// Config management
+OperationStatus update_user_config(const char* user_config_path, const char* keystore_path);
+OperationStatus migrate_user_config(const char* output_path, const char* keystore_path);
+OperationStatus migrate_user_config_0_1_2(
+    const char* new_config_path,
+    const char* old_config_path,
+    const char* keystore_path);
+OperationStatus participate(
+    const char* config_path,
+    const char* keystore_path,
+    const char* output_dir,
+    const char* external_address);
+
+// Keystore
+StringResult generate_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    KeyType key_type,
+    const char* key_title);
+OperationStatus add_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    KeyType key_type,
+    const char* key_hex,
+    const char* key_title);
+OperationStatus remove_key(
+    const char* user_config_path,
+    const char* keystore_path,
+    const char* key_title);
+
+// Identity
+StringResult get_peer_id(const char* config_path);
 
 // Wallet
 BalanceResult get_balance(LogosBlockchainNode* node, const uint8_t* address, const void* reserved);

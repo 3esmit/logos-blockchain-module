@@ -727,3 +727,204 @@ LOGOS_TEST(get_cryptarchia_info_returns_error_on_ffi_failure) {
     LOGOS_ASSERT_TRUE(starts_with(module->get_cryptarchia_info(), "Error:"));
     delete module;
 }
+
+// ============================================================================
+// Config management (operate on file paths, no running node required)
+// ============================================================================
+
+LOGOS_TEST(update_user_config_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("update_user_config").returns(0);
+
+    LOGOS_ASSERT_EQ(module.update_user_config("/tmp/config.yaml", "/tmp/keystore.yaml"), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("update_user_config"));
+}
+
+LOGOS_TEST(update_user_config_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("update_user_config").returns(1);
+
+    LOGOS_ASSERT_EQ(module.update_user_config("/tmp/config.yaml", "/tmp/keystore.yaml"), 1);
+}
+
+LOGOS_TEST(migrate_user_config_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("migrate_user_config").returns(0);
+
+    LOGOS_ASSERT_EQ(module.migrate_user_config("/tmp/out.yaml", "/tmp/keystore.yaml"), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("migrate_user_config"));
+}
+
+LOGOS_TEST(migrate_user_config_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("migrate_user_config").returns(1);
+
+    LOGOS_ASSERT_EQ(module.migrate_user_config("/tmp/out.yaml", "/tmp/keystore.yaml"), 1);
+}
+
+LOGOS_TEST(migrate_user_config_0_1_2_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("migrate_user_config_0_1_2").returns(0);
+
+    LOGOS_ASSERT_EQ(module.migrate_user_config_0_1_2("/tmp/new.yaml", "/tmp/old.yaml", "/tmp/keystore.yaml"), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("migrate_user_config_0_1_2"));
+}
+
+LOGOS_TEST(migrate_user_config_0_1_2_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("migrate_user_config_0_1_2").returns(1);
+
+    LOGOS_ASSERT_EQ(module.migrate_user_config_0_1_2("/tmp/new.yaml", "/tmp/old.yaml", "/tmp/keystore.yaml"), 1);
+}
+
+LOGOS_TEST(participate_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("participate").returns(0);
+
+    LOGOS_ASSERT_EQ(module.participate("/tmp/config.yaml", "/tmp/keystore.yaml", "/tmp/out", ""), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("participate"));
+}
+
+LOGOS_TEST(participate_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("participate").returns(1);
+
+    LOGOS_ASSERT_EQ(module.participate("/tmp/config.yaml", "/tmp/keystore.yaml", "/tmp/out", "1.2.3.4"), 1);
+}
+
+// ============================================================================
+// Keystore (generate_key / add_key / remove_key)
+// ============================================================================
+
+LOGOS_TEST(generate_key_returns_id_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("generate_key").returns("key-abc123");
+    t.mockCFunction("generate_key_error").returns(0);
+
+    std::string result = module.generate_key("/tmp/config.yaml", "/tmp/keystore.yaml", "ed25519", "");
+    LOGOS_ASSERT_EQ(result, std::string("key-abc123"));
+    LOGOS_ASSERT(t.cFunctionCalled("generate_key"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+}
+
+LOGOS_TEST(generate_key_accepts_zk_type) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("generate_key").returns("zk-key");
+    t.mockCFunction("generate_key_error").returns(0);
+
+    std::string result = module.generate_key("/tmp/config.yaml", "/tmp/keystore.yaml", "ZK", "my-title");
+    LOGOS_ASSERT_EQ(result, std::string("zk-key"));
+}
+
+LOGOS_TEST(generate_key_rejects_invalid_key_type) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    std::string result = module.generate_key("/tmp/config.yaml", "/tmp/keystore.yaml", "rsa", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "key_type"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("generate_key"));
+}
+
+LOGOS_TEST(generate_key_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("generate_key_error").returns(1);
+
+    std::string result = module.generate_key("/tmp/config.yaml", "/tmp/keystore.yaml", "ed25519", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+}
+
+LOGOS_TEST(add_key_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("add_key").returns(0);
+
+    LOGOS_ASSERT_EQ(module.add_key("/tmp/config.yaml", "/tmp/keystore.yaml", "ed25519", VALID_HEX, ""), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("add_key"));
+}
+
+LOGOS_TEST(add_key_rejects_invalid_key_type) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    LOGOS_ASSERT_EQ(module.add_key("/tmp/config.yaml", "/tmp/keystore.yaml", "bogus", VALID_HEX, ""), 1);
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("add_key"));
+}
+
+LOGOS_TEST(add_key_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("add_key").returns(1);
+
+    LOGOS_ASSERT_EQ(module.add_key("/tmp/config.yaml", "/tmp/keystore.yaml", "zk", VALID_HEX, "title"), 1);
+}
+
+LOGOS_TEST(remove_key_returns_0_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("remove_key").returns(0);
+
+    LOGOS_ASSERT_EQ(module.remove_key("/tmp/config.yaml", "/tmp/keystore.yaml", "my-key"), 0);
+    LOGOS_ASSERT(t.cFunctionCalled("remove_key"));
+}
+
+LOGOS_TEST(remove_key_returns_1_on_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("remove_key").returns(1);
+
+    LOGOS_ASSERT_EQ(module.remove_key("/tmp/config.yaml", "/tmp/keystore.yaml", "my-key"), 1);
+}
+
+// ============================================================================
+// Identity (get_peer_id)
+// ============================================================================
+
+LOGOS_TEST(get_peer_id_returns_id_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("get_peer_id").returns("12D3KooWPeerId");
+    t.mockCFunction("get_peer_id_error").returns(0);
+
+    std::string result = module.get_peer_id("/tmp/config.yaml");
+    LOGOS_ASSERT_EQ(result, std::string("12D3KooWPeerId"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_peer_id"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+}
+
+LOGOS_TEST(get_peer_id_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("get_peer_id_error").returns(1);
+
+    std::string result = module.get_peer_id("/tmp/config.yaml");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+}

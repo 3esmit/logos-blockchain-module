@@ -1,7 +1,9 @@
 #include "logos_blockchain_module.h"
 
+#include <algorithm>
 #include <boost/algorithm/hex.hpp>
 #include <boost/algorithm/string/trim.hpp>
+#include <cctype>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -50,6 +52,23 @@ namespace {
         out.reserve(len * 2);
         boost::algorithm::hex_lower(data, data + len, std::back_inserter(out));
         return out;
+    }
+
+    // Map a "ed25519" / "zk" string (case-insensitive) to the C KeyType enum.
+    bool parse_key_type(const std::string& s, KeyType& out) {
+        std::string lower = s;
+        boost::algorithm::trim(lower);
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower == "ed25519") {
+            out = KeyType::Ed25519;
+            return true;
+        }
+        if (lower == "zk") {
+            out = KeyType::Zk;
+            return true;
+        }
+        return false;
     }
 
     // Wrapper that owns data and provides GenerateConfigArgs
@@ -321,6 +340,162 @@ int LogosBlockchainModule::stop() {
 
     node = nullptr;
     return 0;
+}
+
+// Config management
+
+int LogosBlockchainModule::update_user_config(const std::string& user_config_path, const std::string& keystore_path) {
+    const std::string config = localPathFromFileUrl(user_config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+
+    const OperationStatus status = ::update_user_config(config.c_str(), keystore.c_str());
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to update user config. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+int LogosBlockchainModule::migrate_user_config(const std::string& output_path, const std::string& keystore_path) {
+    const std::string output = localPathFromFileUrl(output_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+
+    const OperationStatus status = ::migrate_user_config(output.c_str(), keystore.c_str());
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to migrate user config. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+int LogosBlockchainModule::migrate_user_config_0_1_2(
+    const std::string& new_config_path,
+    const std::string& old_config_path,
+    const std::string& keystore_path
+) {
+    const std::string new_config = localPathFromFileUrl(new_config_path);
+    const std::string old_config = localPathFromFileUrl(old_config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+
+    const OperationStatus status =
+        ::migrate_user_config_0_1_2(new_config.c_str(), old_config.c_str(), keystore.c_str());
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to migrate 0.1.2 config. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+int LogosBlockchainModule::participate(
+    const std::string& config_path,
+    const std::string& keystore_path,
+    const std::string& output_dir,
+    const std::string& external_address
+) {
+    const std::string config = localPathFromFileUrl(config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+    const std::string output = localPathFromFileUrl(output_dir);
+    const char* external_address_ptr = external_address.empty() ? nullptr : external_address.c_str();
+
+    const OperationStatus status =
+        ::participate(config.c_str(), keystore.c_str(), output.c_str(), external_address_ptr);
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to generate participation data. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+// Keystore
+
+std::string LogosBlockchainModule::generate_key(
+    const std::string& user_config_path,
+    const std::string& keystore_path,
+    const std::string& key_type,
+    const std::string& key_title
+) {
+    KeyType type{};
+    if (!parse_key_type(key_type, type)) {
+        return "Error: Invalid key_type (expected \"ed25519\" or \"zk\").";
+    }
+
+    const std::string config = localPathFromFileUrl(user_config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+    const char* key_title_ptr = key_title.empty() ? nullptr : key_title.c_str();
+
+    auto [value, error] = ::generate_key(config.c_str(), keystore.c_str(), type, key_title_ptr);
+    if (!is_ok(&error)) {
+        fprintf(stderr, "Failed to generate key. Error: %d\n", error);
+        return "Error: Failed to generate key: " + std::to_string(error);
+    }
+
+    std::string result(value);
+    const OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free key id string. Error: %d\n", free_status);
+    }
+    return result;
+}
+
+int LogosBlockchainModule::add_key(
+    const std::string& user_config_path,
+    const std::string& keystore_path,
+    const std::string& key_type,
+    const std::string& key_hex,
+    const std::string& key_title
+) {
+    KeyType type{};
+    if (!parse_key_type(key_type, type)) {
+        fprintf(stderr, "Invalid key_type (expected \"ed25519\" or \"zk\").\n");
+        return 1;
+    }
+
+    const std::string config = localPathFromFileUrl(user_config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+    const char* key_title_ptr = key_title.empty() ? nullptr : key_title.c_str();
+
+    const OperationStatus status =
+        ::add_key(config.c_str(), keystore.c_str(), type, key_hex.c_str(), key_title_ptr);
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to add key. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+int LogosBlockchainModule::remove_key(
+    const std::string& user_config_path,
+    const std::string& keystore_path,
+    const std::string& key_title
+) {
+    const std::string config = localPathFromFileUrl(user_config_path);
+    const std::string keystore = localPathFromFileUrl(keystore_path);
+
+    const OperationStatus status = ::remove_key(config.c_str(), keystore.c_str(), key_title.c_str());
+    if (!is_ok(&status)) {
+        fprintf(stderr, "Failed to remove key. Error: %d\n", status);
+        return 1;
+    }
+    return 0;
+}
+
+// Identity
+
+std::string LogosBlockchainModule::get_peer_id(const std::string& config_path) {
+    const std::string config = localPathFromFileUrl(config_path);
+
+    auto [value, error] = ::get_peer_id(config.c_str());
+    if (!is_ok(&error)) {
+        fprintf(stderr, "Failed to get peer id. Error: %d\n", error);
+        return "Error: Failed to get peer id: " + std::to_string(error);
+    }
+
+    std::string result(value);
+    const OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free peer id string. Error: %d\n", free_status);
+    }
+    return result;
 }
 
 // Wallet
