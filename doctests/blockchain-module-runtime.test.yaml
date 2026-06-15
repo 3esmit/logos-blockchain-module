@@ -1,0 +1,310 @@
+name: "Running This Blockchain Module Against logoscore"
+output: blockchain-module-runtime.md
+release: ""
+
+intro: |
+  `logos-blockchain-module` is a Logos `core` module that wraps the
+  [logos-blockchain](https://github.com/logos-blockchain/logos-blockchain) C
+  bindings — a full Cryptarchia consensus node with wallet, blend, keystore and
+  block-explorer APIs — and ships the zk circuit binaries the node needs at
+  runtime. This doc-test exercises **this** blockchain-module commit end-to-end
+  through the headless `logoscore` runtime:
+
+  1. Build the `logoscore` CLI and the `lgpm` local package manager from their
+     published flakes. `logoscore` is the headless frontend for `logos-liblogos`,
+     so building it brings in the whole module-runtime stack (`logos_host`,
+     `liblogos_core`, the IPC layer).
+  2. Build **this** blockchain module as an installable `.lgx` package straight
+     from its own flake's `#lgx` output, **pinned to the commit under test** — so
+     the module you run is built from exactly what is checked out here, not the
+     latest published release.
+  3. Install the `.lgx` into a `./modules` directory with `lgpm`.
+  4. Start `logoscore` in daemon mode (`-D`), load `liblogos_blockchain_module`, introspect
+     it with `module-info`, and call several of its methods — verifying the module
+     actually runs and round-trips real values through the logos-blockchain C
+     library.
+
+  Joining the devnet means dialing real peers, NTP sync and zk proving — none of
+  which is reproducible in CI — so this doc-test deliberately stays **offline**.
+  We exercise the methods that do real, deterministic work without a running node
+  (generating a node user-config and its keystore, deriving the peer id,
+  re-syncing the config from the keystore) and we confirm the node-backed methods
+  (wallet, explorer, consensus) are wired up and callable by asserting on the
+  well-defined `The node is not running` response they return before a node is
+  started. Starting an actual node is covered by the UI app and the developer
+  guide.
+
+  Because the module is built from the commit under test and then loaded and
+  called through a real `logoscore` daemon, a green run is real evidence that this
+  change keeps the blockchain module loadable and callable.
+
+what_you_build: "This `liblogos_blockchain_module`, packaged as `.lgx`, installed with `lgpm`, and called through a `logoscore` daemon."
+
+what_you_learn:
+  - How to build the `logoscore` runtime and the `lgpm` package manager from their flakes
+  - How a module's flake exposes a ready-to-install `.lgx` via its `#lgx` output
+  - How to install an `.lgx` into a modules directory with `lgpm`
+  - How to start the `logoscore` daemon, load a module, introspect it, and call its methods
+  - How to generate a node user-config and keystore, and derive the peer id, offline
+  - How to re-sync a user config from its keystore with `update_user_config`
+  - How the node-backed methods report a clear error until a node is started
+  - How to shut the daemon down and confirm it has exited
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.**"
+
+sections:
+  - title: "Build logoscore"
+    step: true
+    text: |
+      Build the `logoscore` CLI from its published flake. The result is symlinked to
+      `./logos/`. `logoscore` is the headless frontend for `logos-liblogos`, so this
+      one build brings in the whole module-runtime stack the daemon needs.
+    steps:
+      - title: "Build the CLI"
+        run: "nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos"
+        code_block: |
+          nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos
+        check_file: "logos/bin/logoscore"
+        post_text: |
+          The build produces `logos/bin/logoscore` plus bundled runtime libraries
+          and a `logos/modules/` directory containing the built-in
+          `capability_module` (required for the auth handshake when loading
+          modules).
+
+  - title: "Build the lgpm package manager"
+    step: true
+    text: |
+      `lgpm` installs `.lgx` packages into a modules directory and scans what is
+      installed. Build it from the `logos-package-manager` flake and link it as
+      `./lgpm`.
+    steps:
+      - title: "Build lgpm"
+        run: "nix build 'github:logos-co/logos-package-manager#cli' -o lgpm"
+        check_file: "lgpm/bin/lgpm"
+        post_text: "The executable is at `./lgpm/bin/lgpm`."
+
+  - title: "Build and install this blockchain module"
+    step: true
+    text: |
+      Build **this** blockchain module's `.lgx` straight from its flake's `#lgx`
+      output and install it into a local `./modules` directory with `lgpm`. Every
+      module built with
+      [`logos-module-builder`](https://github.com/logos-co/logos-module-builder)
+      exposes a ready-to-install `#lgx`.
+
+      > The `{release}` in the URL is what pins the build to a specific commit: the
+      > doc-test runner expands it to a concrete ref. Locally that is this
+      > checkout's `HEAD` (see `run.sh`); in CI it is the commit being tested. With
+      > no pin it falls back to the latest `master`.
+    steps:
+      - title: "Build the module's .lgx"
+        text: |
+          Build the `#lgx` output and link it as `./blockchain-lgx`. (This compiles
+          the module, the logos-blockchain Rust node and its zk circuits through
+          Nix, so the first build is slow.)
+        run: "nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' -o blockchain-lgx"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#lgx'
+          nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' -o blockchain-lgx
+        post_text: "The `.lgx` package is now under `./blockchain-lgx/`:"
+        extra_run:
+          run: "ls blockchain-lgx/*.lgx"
+
+      - title: "Seed the modules directory with the bundled capability module"
+        text: |
+          `liblogos_blockchain_module` is loaded through the host's capability layer, so the
+          modules directory also needs the `capability_module` that ships with
+          `logoscore`. Copy it across first.
+        run: |
+          mkdir -p modules
+          cp -RL ./logos/modules/. ./modules/
+        check_file: "modules/capability_module/manifest.json"
+
+      - title: "Install the .lgx with lgpm"
+        text: |
+          Install the freshly-built package into `./modules`. `liblogos_blockchain_module` is
+          a `core` module, so it goes to `--modules-dir`. The package is unsigned
+          (a local dev build), so we pass `--allow-unsigned`.
+        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file blockchain-lgx/*.lgx"
+        expect_contains:
+          - "Installed to:"
+
+      - title: "Confirm the install"
+        text: "Scan the directory and confirm the module landed:"
+        run: "./lgpm/bin/lgpm --modules-dir ./modules list"
+        expect_contains:
+          - "liblogos_blockchain_module"
+        check_file: "modules/liblogos_blockchain_module/manifest.json"
+
+  - title: "Run the daemon and call the module"
+    step: true
+    text: |
+      Start `logoscore` in daemon mode pointed at `./modules`, then use the client
+      subcommands to load `liblogos_blockchain_module`, introspect it, and call several of
+      its methods. Daemon output is captured in `logs.txt`.
+    steps:
+      - title: "Start the daemon"
+        text: |
+          Start logoscore in daemon mode in the background, capturing output to
+          `logs.txt`:
+        run: "sh -c './logos/bin/logoscore -D -m ./modules > logs.txt 2>&1 &'"
+        code_block: "logoscore -D -m ./modules > logs.txt &"
+        post_text: |
+          The `-D` flag starts the daemon. The client subcommands below connect to
+          this running process via the config written under `~/.logoscore/`.
+
+      - run: "sleep 3"
+
+      - title: "Inspect the startup log"
+        text: "Review the daemon's startup output:"
+        run: "cat logs.txt"
+
+      - title: "Check daemon status"
+        text: "Verify the daemon is running:"
+        run: "./logos/bin/logoscore status"
+        code_block: "logoscore status"
+
+      - title: "List discovered modules"
+        text: "`liblogos_blockchain_module` should be visible in the scan directory:"
+        run: "./logos/bin/logoscore list-modules"
+        code_block: "logoscore list-modules"
+        expect_contains:
+          - "liblogos_blockchain_module"
+
+      - title: "Load the module"
+        text: "Load `liblogos_blockchain_module` into the running daemon:"
+        run: "./logos/bin/logoscore load-module liblogos_blockchain_module"
+        code_block: "logoscore load-module liblogos_blockchain_module"
+        expect_contains:
+          - "liblogos_blockchain_module"
+
+      - title: "Confirm the module is loaded"
+        text: |
+          Re-run `status`; the module that was `not_loaded` before now reports
+          `loaded`:
+        run: "./logos/bin/logoscore status"
+        code_block: "logoscore status"
+        expect_contains:
+          - "liblogos_blockchain_module"
+          - '"status":"loaded"'
+
+      - title: "Introspect the module with module-info"
+        text: |
+          `module-info` lists the `Q_INVOKABLE` methods the module exposes — the
+          same methods you can `call`:
+        run: "./logos/bin/logoscore module-info liblogos_blockchain_module"
+        code_block: "logoscore module-info liblogos_blockchain_module"
+        expect_contains:
+          - "liblogos_blockchain_module"
+          - "generate_user_config"
+          - "get_peer_id"
+          - "get_cryptarchia_info"
+
+      - title: "Generate a node user-config"
+        text: |
+          `generate_user_config` takes a JSON argument describing the node and
+          writes a ready-to-run config file to the `output` path, plus a sibling
+          `keystore.yaml` holding freshly-generated default keys — no node or
+          network required. We write the config to `./user-config.yaml`; a `0`
+          result means success. The JSON is passed with logoscore's `@file` syntax
+          after writing it to disk:
+        file:
+          path: gen-config.json
+          content: |
+            {
+              "output": "./user-config.yaml"
+            }
+        run: "./logos/bin/logoscore call liblogos_blockchain_module generate_user_config @gen-config.json"
+        code_block: "logoscore call liblogos_blockchain_module generate_user_config @gen-config.json"
+        expect_contains:
+          - '"result":0'
+        check_file: "user-config.yaml"
+
+      - title: "Confirm the keystore was written alongside the config"
+        text: |
+          `generate_user_config` also writes a `keystore.yaml` next to the config,
+          holding the node's freshly-generated default keys. Both files are written
+          relative to the daemon's working directory:
+        run: "ls -1 user-config.yaml keystore.yaml"
+        check_file: "keystore.yaml"
+
+      - title: "Derive the node's peer id"
+        text: |
+          `get_peer_id` reads the network key out of the config we just generated
+          and derives the libp2p peer id from it — a deterministic, offline
+          round-trip through the logos-blockchain C library. The result is the
+          node's base58 peer id (the `12D3Koo…` form):
+        run: "./logos/bin/logoscore call liblogos_blockchain_module get_peer_id ./user-config.yaml"
+        code_block: "logoscore call liblogos_blockchain_module get_peer_id ./user-config.yaml"
+        expect_contains:
+          - '"result":"12D3Koo'
+
+      - title: "Update the user-config from the keystore"
+        text: |
+          `update_user_config` re-syncs a user config with the keys in a keystore
+          file — the same offline maintenance operation the `update-config` CLI
+          command performs. It takes the config path and the keystore path and
+          returns `0` on success. We point it at the pair generated above:
+        run: "./logos/bin/logoscore call liblogos_blockchain_module update_user_config ./user-config.yaml ./keystore.yaml"
+        code_block: "logoscore call liblogos_blockchain_module update_user_config ./user-config.yaml ./keystore.yaml"
+        expect_contains:
+          - '"result":0'
+
+      - title: "Query consensus info before the node is running"
+        text: |
+          The node-backed methods (wallet, explorer, consensus) need a started
+          node. Calling `get_cryptarchia_info` now — before `start` — returns the
+          module's well-defined `The node is not running` message. This proves the
+          method is wired through the IPC bridge and callable; actually starting
+          the node (which dials the devnet) is out of scope for this offline
+          doc-test:
+        run: "./logos/bin/logoscore call liblogos_blockchain_module get_cryptarchia_info"
+        code_block: "logoscore call liblogos_blockchain_module get_cryptarchia_info"
+        expect_contains:
+          - "The node is not running"
+
+      - title: "Query a wallet balance before the node is running"
+        text: |
+          `wallet_get_balance` behaves the same way — it reports the node is not
+          running rather than crashing, so a frontend can surface a clean error:
+        run: "./logos/bin/logoscore call liblogos_blockchain_module wallet_get_balance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        code_block: "logoscore call liblogos_blockchain_module wallet_get_balance <address-hex>"
+        expect_contains:
+          - "The node is not running"
+
+      - title: "Query the block explorer before the node is running"
+        text: |
+          The explorer method `get_block` is the same: callable through the bridge,
+          and reporting the node is not running until one is started:
+        run: "./logos/bin/logoscore call liblogos_blockchain_module get_block aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        code_block: "logoscore call liblogos_blockchain_module get_block <header-id-hex>"
+        expect_contains:
+          - "The node is not running"
+
+      - title: "Stop the daemon"
+        text: "Shut the daemon down cleanly:"
+        run: "./logos/bin/logoscore stop"
+        code_block: "logoscore stop"
+        post_text: |
+          The daemon removes its state file and exits.
+
+      - run: "sleep 2"
+
+      - title: "Confirm the daemon has stopped"
+        text: |
+          With no daemon running, the client reports `not_running` and exits
+          non-zero, so we add `|| true` to let the doc-test assert on the output:
+        run: "./logos/bin/logoscore status || true"
+        code_block: "logoscore status"
+        expect_contains:
+          - '"status":"not_running"'
