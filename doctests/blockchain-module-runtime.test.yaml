@@ -224,6 +224,22 @@ sections:
           - '"result":0'
         check_file: "user_config.yaml"
 
+      - title: "Download deployment configuration"
+        text: |
+          Download deployment configuration for environment that you want to
+          connect. For example `devnet`:
+        run: "curl -L -o devnet_deployment.yaml https://devnet.blockchain.logos.co/web/cfgsync/deployment-settings"
+        code_block: "curl -L -o devnet_deployment.yaml https://devnet.blockchain.logos.co/web/cfgsync/deployment-settings"
+        check_file: "devnet_deployment.yaml"
+
+      - title: "Start a node with genereted user_config.yaml"
+        text: |
+          Start a blockchain module with the generated `user_config.yaml` file:
+        run: "./logos/bin/logoscore call liblogos_blockchain_module start user_config.yaml devnet_deployment.yaml"
+        code_block: "logoscore call liblogos_blockchain_module start user_config.yaml devnet_deployment.yaml"
+        expect_contains:
+          - '"result":0'
+
       - title: "Confirm the keystore was written alongside the config"
         text: |
           `generate_user_config` also writes a `keystore.yaml` next to the config,
