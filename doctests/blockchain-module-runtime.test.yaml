@@ -215,21 +215,21 @@ sections:
           `generate_user_config` takes a JSON argument describing the node and
           writes a ready-to-run config file to the `output` path, plus a sibling
           `keystore.yaml` holding freshly-generated default keys — no node or
-          network required. We write the config to `./user-config.yaml`; a `0`
+          network required. We write the config to `./user_config.yaml`; a `0`
           result means success. The JSON is passed with logoscore's `@file` syntax
           after writing it to disk:
         run: "./logos/bin/logoscore call liblogos_blockchain_module generate_user_config '{}'"
         code_block: "logoscore call liblogos_blockchain_module generate_user_config '{}'"
         expect_contains:
           - '"result":0'
-        check_file: "user-config.yaml"
+        check_file: "user_config.yaml"
 
       - title: "Confirm the keystore was written alongside the config"
         text: |
           `generate_user_config` also writes a `keystore.yaml` next to the config,
           holding the node's freshly-generated default keys. Both files are written
           relative to the daemon's working directory:
-        run: "ls -1 user-config.yaml keystore.yaml"
+        run: "ls -1 user_config.yaml keystore.yaml"
         check_file: "keystore.yaml"
 
       - title: "Derive the node's peer id"
@@ -238,8 +238,8 @@ sections:
           and derives the libp2p peer id from it — a deterministic, offline
           round-trip through the logos-blockchain C library. The result is the
           node's base58 peer id (the `12D3Koo…` form):
-        run: "./logos/bin/logoscore call liblogos_blockchain_module get_peer_id ./user-config.yaml"
-        code_block: "logoscore call liblogos_blockchain_module get_peer_id ./user-config.yaml"
+        run: "./logos/bin/logoscore call liblogos_blockchain_module get_peer_id ./user_config.yaml"
+        code_block: "logoscore call liblogos_blockchain_module get_peer_id ./user_config.yaml"
         expect_contains:
           - '"result":"12D3Koo'
 
@@ -249,8 +249,8 @@ sections:
           file — the same offline maintenance operation the `update-config` CLI
           command performs. It takes the config path and the keystore path and
           returns `0` on success. We point it at the pair generated above:
-        run: "./logos/bin/logoscore call liblogos_blockchain_module update_user_config ./user-config.yaml ./keystore.yaml"
-        code_block: "logoscore call liblogos_blockchain_module update_user_config ./user-config.yaml ./keystore.yaml"
+        run: "./logos/bin/logoscore call liblogos_blockchain_module update_user_config ./user_config.yaml ./keystore.yaml"
+        code_block: "logoscore call liblogos_blockchain_module update_user_config ./user_config.yaml ./keystore.yaml"
         expect_contains:
           - '"result":0'
 
