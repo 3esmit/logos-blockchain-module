@@ -248,7 +248,7 @@ after writing it to disk:
 ```
 
 ```bash
-logoscore call liblogos_blockchain_module generate_user_config @gen-config.json
+logoscore call liblogos_blockchain_module generate_user_config '{}' 
 ```
 
 ### 4.9 Confirm the keystore was written alongside the config

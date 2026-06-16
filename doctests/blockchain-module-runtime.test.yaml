@@ -218,14 +218,8 @@ sections:
           network required. We write the config to `./user-config.yaml`; a `0`
           result means success. The JSON is passed with logoscore's `@file` syntax
           after writing it to disk:
-        file:
-          path: gen-config.json
-          content: |
-            {
-              "output": "./user-config.yaml"
-            }
-        run: "./logos/bin/logoscore call liblogos_blockchain_module generate_user_config @gen-config.json"
-        code_block: "logoscore call liblogos_blockchain_module generate_user_config @gen-config.json"
+        run: "./logos/bin/logoscore call liblogos_blockchain_module generate_user_config '{}'"
+        code_block: "logoscore call liblogos_blockchain_module generate_user_config '{}'"
         expect_contains:
           - '"result":0'
         check_file: "user-config.yaml"
