@@ -82,10 +82,10 @@ namespace {
         uint16_t blend_port_val;
         std::string http_addr_data;
         std::string external_address_data;
-        bool no_public_ip_check_val;
-        std::string custom_deployment_config_path_data;
-        Deployment deployment_val{};
         std::string state_path_data;
+        bool ibd_val;
+        std::string log_filter_data;
+        std::string kms_file_data;
 
         // The FFI struct with pointers into owned data
         GenerateConfigArgs ffi_args{};
@@ -150,45 +150,36 @@ namespace {
                 ffi_args.external_address = nullptr;
             }
 
-            // no_public_ip_check (bool -> const bool*)
-            if (args.contains("no_public_ip_check") && args["no_public_ip_check"].is_boolean()) {
-                no_public_ip_check_val = args["no_public_ip_check"].get<bool>();
-                ffi_args.no_public_ip_check = &no_public_ip_check_val;
-            } else {
-                ffi_args.no_public_ip_check = nullptr;
-            }
-
-            // deployment (const struct Deployment*)
-            // Expected format: { "deployment": { "well_known_deployment": "devnet" } }
-            //              OR: { "deployment": { "config_path": "/path/to/config" } }
-            if (args.contains("deployment") && args["deployment"].is_object()) {
-                const auto& deployment = args["deployment"];
-
-                if (deployment.contains("well_known_deployment") && deployment["well_known_deployment"].is_string()) {
-                    deployment_val.deployment_type = DeploymentType::WellKnown;
-                    const std::string wellknown = deployment["well_known_deployment"].get<std::string>();
-                    if (wellknown == "devnet") {
-                        deployment_val.well_known_deployment = WellKnownDeployment::Devnet;
-                    }
-                    deployment_val.custom_deployment_config_path = nullptr;
-                } else if (deployment.contains("config_path") && deployment["config_path"].is_string()) {
-                    deployment_val.deployment_type = DeploymentType::Custom;
-                    deployment_val.well_known_deployment = static_cast<WellKnownDeployment>(0);
-                    custom_deployment_config_path_data = deployment["config_path"].get<std::string>();
-                    deployment_val.custom_deployment_config_path = custom_deployment_config_path_data.c_str();
-                }
-
-                ffi_args.deployment = &deployment_val;
-            } else {
-                ffi_args.deployment = nullptr;
-            }
-
             // state_path (string -> const char*)
             if (args.contains("state_path") && args["state_path"].is_string()) {
                 state_path_data = args["state_path"].get<std::string>();
                 ffi_args.state_path = state_path_data.c_str();
             } else {
                 ffi_args.state_path = nullptr;
+            }
+
+            // ibd (bool -> const bool*)
+            if (args.contains("ibd") && args["ibd"].is_boolean()) {
+                ibd_val = args["ibd"].get<bool>();
+                ffi_args.ibd = &ibd_val;
+            } else {
+                ffi_args.ibd = nullptr;
+            }
+
+            // log_filter (string -> const char*)
+            if (args.contains("log_filter") && args["log_filter"].is_string()) {
+                log_filter_data = args["log_filter"].get<std::string>();
+                ffi_args.log_filter = log_filter_data.c_str();
+            } else {
+                ffi_args.log_filter = nullptr;
+            }
+
+            // kms_file (string -> const char*)
+            if (args.contains("kms_file") && args["kms_file"].is_string()) {
+                kms_file_data = args["kms_file"].get<std::string>();
+                ffi_args.kms_file = kms_file_data.c_str();
+            } else {
+                ffi_args.kms_file = nullptr;
             }
         }
     };
@@ -247,13 +238,13 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 
 // Lifecycle
 
-int LogosBlockchainModule::generate_user_config(const std::string& json_args) {
+std::string LogosBlockchainModule::generate_user_config(const std::string& json_args) {
     json parsed_args;
     try {
         parsed_args = json::parse(json_args);
     } catch (const json::parse_error& e) {
         fprintf(stderr, "Failed to parse JSON args: %s\n", e.what());
-        return 1;
+        return "1";
     }
 
     const OwnedGenerateConfigArgs owned_args(parsed_args);
@@ -261,16 +252,16 @@ int LogosBlockchainModule::generate_user_config(const std::string& json_args) {
     const OperationStatus status = ::generate_user_config(owned_args.ffi_args);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to generate user config. Error: %d\n", status);
-        return 1;
+        return "1";
     }
 
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
+std::string LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
     if (node) {
         fprintf(stderr, "Could not execute the operation: The node is already running.\n");
-        return 1;
+        return "1";
     }
 
     const char* module_path_env = std::getenv("LOGOS_MODULE_PATH");
@@ -289,7 +280,7 @@ int LogosBlockchainModule::start(const std::string& config_path, const std::stri
             fprintf(stderr, "Using config from LB_CONFIG_PATH: %s\n", effective_config_path.c_str());
         } else {
             fprintf(stderr, "Config path was not specified and LB_CONFIG_PATH is not set.\n");
-            return 3;
+            return "3";
         }
     }
 
@@ -303,7 +294,7 @@ int LogosBlockchainModule::start(const std::string& config_path, const std::stri
     fprintf(stderr, "Start node returned with value and error.\n");
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to start the node. Error: %d\n", error);
-        return 4;
+        return "4";
     }
 
     node = value;
@@ -311,23 +302,23 @@ int LogosBlockchainModule::start(const std::string& config_path, const std::stri
 
     if (!node) {
         fprintf(stderr, "Could not subscribe to block events: The node is not running.\n");
-        return 4;
+        return "4";
     }
 
     s_instance = this;
     const OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (!is_ok(&subscribe_status)) {
         fprintf(stderr, "Failed to subscribe to new blocks. Error: %d\n", subscribe_status);
-        return 5;
+        return "5";
     }
 
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::stop() {
+std::string LogosBlockchainModule::stop() {
     if (!node) {
         fprintf(stderr, "Could not execute the operation: The node is not running.\n");
-        return 1;
+        return "1";
     }
 
     s_instance = nullptr;
@@ -340,36 +331,36 @@ int LogosBlockchainModule::stop() {
     }
 
     node = nullptr;
-    return 0;
+    return "0";
 }
 
 // Config management
 
-int LogosBlockchainModule::update_user_config(const std::string& user_config_path, const std::string& keystore_path) {
+std::string LogosBlockchainModule::update_user_config(const std::string& user_config_path, const std::string& keystore_path) {
     const std::string config = localPathFromFileUrl(user_config_path);
     const std::string keystore = localPathFromFileUrl(keystore_path);
 
     const OperationStatus status = ::update_user_config(config.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to update user config. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::migrate_user_config(const std::string& output_path, const std::string& keystore_path) {
+std::string LogosBlockchainModule::migrate_user_config(const std::string& output_path, const std::string& keystore_path) {
     const std::string output = localPathFromFileUrl(output_path);
     const std::string keystore = localPathFromFileUrl(keystore_path);
 
     const OperationStatus status = ::migrate_user_config(output.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to migrate user config. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::migrate_user_config_0_1_2(
+std::string LogosBlockchainModule::migrate_user_config_0_1_2(
     const std::string& new_config_path,
     const std::string& old_config_path,
     const std::string& keystore_path
@@ -382,12 +373,12 @@ int LogosBlockchainModule::migrate_user_config_0_1_2(
         ::migrate_user_config_0_1_2(new_config.c_str(), old_config.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to migrate 0.1.2 config. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::participate(
+std::string LogosBlockchainModule::participate(
     const std::string& config_path,
     const std::string& keystore_path,
     const std::string& output_dir,
@@ -402,9 +393,9 @@ int LogosBlockchainModule::participate(
         ::participate(config.c_str(), keystore.c_str(), output.c_str(), external_address_ptr);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to generate participation data. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
 // Keystore
@@ -438,7 +429,7 @@ std::string LogosBlockchainModule::generate_key(
     return result;
 }
 
-int LogosBlockchainModule::add_key(
+std::string LogosBlockchainModule::add_key(
     const std::string& user_config_path,
     const std::string& keystore_path,
     const std::string& key_type,
@@ -448,7 +439,7 @@ int LogosBlockchainModule::add_key(
     KeyType type{};
     if (!parse_key_type(key_type, type)) {
         fprintf(stderr, "Invalid key_type (expected \"ed25519\" or \"zk\").\n");
-        return 1;
+        return "1";
     }
 
     const std::string config = localPathFromFileUrl(user_config_path);
@@ -459,12 +450,12 @@ int LogosBlockchainModule::add_key(
         ::add_key(config.c_str(), keystore.c_str(), type, key_hex.c_str(), key_title_ptr);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to add key. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
-int LogosBlockchainModule::remove_key(
+std::string LogosBlockchainModule::remove_key(
     const std::string& user_config_path,
     const std::string& keystore_path,
     const std::string& key_title
@@ -475,9 +466,9 @@ int LogosBlockchainModule::remove_key(
     const OperationStatus status = ::remove_key(config.c_str(), keystore.c_str(), key_title.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to remove key. Error: %d\n", status);
-        return 1;
+        return "1";
     }
-    return 0;
+    return "0";
 }
 
 // Identity

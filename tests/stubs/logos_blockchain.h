@@ -23,22 +23,11 @@ typedef struct LogosBlockchainNode LogosBlockchainNode;
 // Operation status (0 = OK)
 typedef int OperationStatus;
 
-// Deployment enums
-typedef enum { WellKnown, Custom } DeploymentType;
-typedef enum { Devnet } WellKnownDeployment;
-
 // Consensus state enum
 typedef enum { Bootstrapping, Online } State;
 
 // Key type for generate_key / add_key
 typedef enum { Ed25519, Zk } KeyType;
-
-// Deployment configuration
-typedef struct {
-    DeploymentType deployment_type;
-    WellKnownDeployment well_known_deployment;
-    const char* custom_deployment_config_path;
-} Deployment;
 
 // Arguments for generate_user_config
 typedef struct {
@@ -49,9 +38,10 @@ typedef struct {
     const uint16_t* blend_port;
     const char* http_addr;
     const char* external_address;
-    const bool* no_public_ip_check;
-    const Deployment* deployment;
     const char* state_path;
+    const bool* ibd;
+    const char* log_filter;
+    const char* kms_file;
 } GenerateConfigArgs;
 
 // Arguments for transfer_funds

@@ -22,19 +22,19 @@ public:
     // ---- Node ----
 
     // Lifecycle
-    int generate_user_config(const std::string& json_args);
-    int start(const std::string& config_path, const std::string& deployment);
-    int stop();
+    std::string generate_user_config(const std::string& json_args);
+    std::string start(const std::string& config_path, const std::string& deployment);
+    std::string stop();
 
     // Config management
-    int update_user_config(const std::string& user_config_path, const std::string& keystore_path);
-    int migrate_user_config(const std::string& output_path, const std::string& keystore_path);
-    int migrate_user_config_0_1_2(
+    std::string update_user_config(const std::string& user_config_path, const std::string& keystore_path);
+    std::string migrate_user_config(const std::string& output_path, const std::string& keystore_path);
+    std::string migrate_user_config_0_1_2(
         const std::string& new_config_path,
         const std::string& old_config_path,
         const std::string& keystore_path
     );
-    int participate(
+    std::string participate(
         const std::string& config_path,
         const std::string& keystore_path,
         const std::string& output_dir,
@@ -49,14 +49,14 @@ public:
         const std::string& key_type,
         const std::string& key_title
     );
-    int add_key(
+    std::string add_key(
         const std::string& user_config_path,
         const std::string& keystore_path,
         const std::string& key_type,
         const std::string& key_hex,
         const std::string& key_title
     );
-    int remove_key(
+    std::string remove_key(
         const std::string& user_config_path,
         const std::string& keystore_path,
         const std::string& key_title
