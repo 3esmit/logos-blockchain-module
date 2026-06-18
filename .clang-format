@@ -23,4 +23,6 @@ AllowShortLoopsOnASingleLine: false
 BreakAfterReturnType: None
 PenaltyReturnTypeOnItsOwnLine: 1000
 
+BreakTemplateDeclarations: Yes
+
 NamespaceIndentation: All

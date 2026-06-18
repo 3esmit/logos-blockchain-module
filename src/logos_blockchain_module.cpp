@@ -6,7 +6,6 @@
 #include <cctype>
 #include <charconv>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -18,12 +17,30 @@ using json = nlohmann::json;
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
 
+// Shorthands for building StdLogosResult values.
+namespace result {
+    StdLogosResult ok() {
+        return {true};
+    }
+
+    template <typename T>
+    StdLogosResult ok(T value) { // NOLINT(performance-unnecessary-value-param)
+        return {true, std::move(value)};
+    }
+
+    StdLogosResult err(std::string message) {
+        return {false, {}, std::move(message)};
+    }
+} // namespace result
+
 namespace {
     // Rust `File::open` / `deserialize_config_at_path` only accept real filesystem paths. QML often
     // passes `file:///...` URLs; strip to a local path when applicable.
     std::string localPathFromFileUrl(const std::string& s) {
-        if (s.size() >= 7 && s.substr(0, 7) == "file://") return s.substr(7);
-        if (s.size() >= 5 && s.substr(0, 5) == "file:") return s.substr(5);
+        if (s.size() >= 7 && s.substr(0, 7) == "file://")
+            return s.substr(7);
+        if (s.size() >= 5 && s.substr(0, 5) == "file:")
+            return s.substr(5);
         return s;
     }
 
@@ -69,19 +86,20 @@ namespace {
         }
     }
 
-    std::string bytes_to_hex(const uint8_t* data, size_t len) {
+    std::string bytes_to_hex(const uint8_t* data, const size_t len) {
         std::string out;
         out.reserve(len * 2);
         boost::algorithm::hex_lower(data, data + len, std::back_inserter(out));
         return out;
     }
 
-    // Map a "ed25519" / "zk" string (case-insensitive) to the C KeyType enum.
+    // Maps an `ed25519`/`zk` string (case-insensitive) to the C KeyType enum.
     bool parse_key_type(const std::string& s, KeyType& out) {
         std::string lower = s;
         boost::algorithm::trim(lower);
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char c) {
+            return std::tolower(c);
+        });
         if (lower == "ed25519") {
             out = KeyType::Ed25519;
             return true;
@@ -211,19 +229,24 @@ namespace environment {
 
     bool is_circuits_path_valid(const std::string& path) {
         std::error_code ec;
-        if (!fs::is_directory(path, ec)) return false;
-        for (const auto& entry : fs::directory_iterator(path, ec)) {
-            if (entry.is_regular_file()) return true;
+        if (!fs::is_directory(path, ec))
+            return false;
+        for (const auto& entry : fs::directory_iterator(path, ec)) { // NOLINT(*-use-anyofallof)
+            if (entry.is_regular_file())
+                return true;
         }
         return false;
     }
 
     void setup_circuits_path(const std::string& module_path) {
-        fs::path circuits_path = fs::path(module_path) / "circuits";
-        std::string circuits_str = circuits_path.string();
+        const fs::path circuits_path = fs::path(module_path) / "circuits";
+        const std::string circuits_str = circuits_path.string();
 
         if (!is_circuits_path_valid(circuits_str)) {
-            fprintf(stderr, "FATAL: The LOGOS_BLOCKCHAIN_CIRCUITS environment variable is not set or does not contain any files.\n");
+            fprintf(
+                stderr,
+                "FATAL: The LOGOS_BLOCKCHAIN_CIRCUITS environment variable is not set or does not contain any files.\n"
+            );
             return;
         }
 
@@ -251,7 +274,7 @@ LogosBlockchainModule::LogosBlockchainModule() {
 LogosBlockchainModule::~LogosBlockchainModule() {
     s_instance = nullptr;
     if (node) {
-        stop();
+        (void)stop();
     }
 }
 
@@ -259,13 +282,13 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 
 // Lifecycle
 
-std::string LogosBlockchainModule::generate_user_config(const std::string& json_args) {
+StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& json_args) {
     json parsed_args;
     try {
         parsed_args = json::parse(json_args);
     } catch (const json::parse_error& e) {
         fprintf(stderr, "Failed to parse JSON args: %s\n", e.what());
-        return "1";
+        return result::err(std::string("Failed to parse JSON args: ") + e.what());
     }
 
     const OwnedGenerateConfigArgs owned_args(parsed_args);
@@ -273,23 +296,23 @@ std::string LogosBlockchainModule::generate_user_config(const std::string& json_
     const OperationStatus status = ::generate_user_config(owned_args.ffi_args);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to generate user config. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to generate user config.");
     }
 
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
+StdLogosResult LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
     if (node) {
         fprintf(stderr, "Could not execute the operation: The node is already running.\n");
-        return "1";
+        return result::err("The node is already running.");
     }
 
     const char* module_path_env = std::getenv("LOGOS_MODULE_PATH");
     if (module_path_env && *module_path_env) {
         environment::setup_circuits_path(module_path_env);
     } else {
-        fprintf(stderr, "Warning: LOGOS_MODULE_PATH not set, skipping circuits path setup.\n");
+        fprintf(stderr, "Warning: LOGOS_MODULE_PATH not set, skipping circuits' path setup.\n");
     }
 
     std::string effective_config_path = config_path;
@@ -301,7 +324,7 @@ std::string LogosBlockchainModule::start(const std::string& config_path, const s
             fprintf(stderr, "Using config from LB_CONFIG_PATH: %s\n", effective_config_path.c_str());
         } else {
             fprintf(stderr, "Config path was not specified and LB_CONFIG_PATH is not set.\n");
-            return "3";
+            return result::err("Config path was not specified and LB_CONFIG_PATH is not set.");
         }
     }
 
@@ -315,7 +338,7 @@ std::string LogosBlockchainModule::start(const std::string& config_path, const s
     fprintf(stderr, "Start node returned with value and error.\n");
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to start the node. Error: %d\n", error);
-        return "4";
+        return result::err("Failed to start the node.");
     }
 
     node = value;
@@ -323,23 +346,23 @@ std::string LogosBlockchainModule::start(const std::string& config_path, const s
 
     if (!node) {
         fprintf(stderr, "Could not subscribe to block events: The node is not running.\n");
-        return "4";
+        return result::err("Could not subscribe to block events: the node is not running.");
     }
 
     s_instance = this;
     const OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (!is_ok(&subscribe_status)) {
         fprintf(stderr, "Failed to subscribe to new blocks. Error: %d\n", subscribe_status);
-        return "5";
+        return result::err("Failed to subscribe to new blocks.");
     }
 
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::stop() {
+StdLogosResult LogosBlockchainModule::stop() {
     if (!node) {
         fprintf(stderr, "Could not execute the operation: The node is not running.\n");
-        return "1";
+        return result::err("The node is not running.");
     }
 
     s_instance = nullptr;
@@ -352,36 +375,42 @@ std::string LogosBlockchainModule::stop() {
     }
 
     node = nullptr;
-    return "0";
+    return result::ok();
 }
 
 // Config management
 
-std::string LogosBlockchainModule::update_user_config(const std::string& user_config_path, const std::string& keystore_path) {
+StdLogosResult LogosBlockchainModule::update_user_config(
+    const std::string& user_config_path,
+    const std::string& keystore_path
+) {
     const std::string config = localPathFromFileUrl(user_config_path);
     const std::string keystore = localPathFromFileUrl(keystore_path);
 
     const OperationStatus status = ::update_user_config(config.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to update user config. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to update user config.");
     }
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::migrate_user_config(const std::string& output_path, const std::string& keystore_path) {
+StdLogosResult LogosBlockchainModule::migrate_user_config(
+    const std::string& output_path,
+    const std::string& keystore_path
+) {
     const std::string output = localPathFromFileUrl(output_path);
     const std::string keystore = localPathFromFileUrl(keystore_path);
 
     const OperationStatus status = ::migrate_user_config(output.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to migrate user config. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to migrate user config.");
     }
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::migrate_user_config_0_1_2(
+StdLogosResult LogosBlockchainModule::migrate_user_config_0_1_2(
     const std::string& new_config_path,
     const std::string& old_config_path,
     const std::string& keystore_path
@@ -394,12 +423,12 @@ std::string LogosBlockchainModule::migrate_user_config_0_1_2(
         ::migrate_user_config_0_1_2(new_config.c_str(), old_config.c_str(), keystore.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to migrate 0.1.2 config. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to migrate 0.1.2 config.");
     }
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::participate(
+StdLogosResult LogosBlockchainModule::participate(
     const std::string& config_path,
     const std::string& keystore_path,
     const std::string& output_dir,
@@ -414,14 +443,14 @@ std::string LogosBlockchainModule::participate(
         ::participate(config.c_str(), keystore.c_str(), output.c_str(), external_address_ptr);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to generate participation data. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to generate participation data.");
     }
-    return "0";
+    return result::ok();
 }
 
 // Keystore
 
-std::string LogosBlockchainModule::generate_key(
+StdLogosResult LogosBlockchainModule::generate_key(
     const std::string& user_config_path,
     const std::string& keystore_path,
     const std::string& key_type,
@@ -429,7 +458,7 @@ std::string LogosBlockchainModule::generate_key(
 ) {
     KeyType type{};
     if (!parse_key_type(key_type, type)) {
-        return "Error: Invalid key_type (expected \"ed25519\" or \"zk\").";
+        return result::err(R"(Invalid key_type (expected "ed25519" or "zk").)");
     }
 
     const std::string config = localPathFromFileUrl(user_config_path);
@@ -439,18 +468,18 @@ std::string LogosBlockchainModule::generate_key(
     auto [value, error] = ::generate_key(config.c_str(), keystore.c_str(), type, key_title_ptr);
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to generate key. Error: %d\n", error);
-        return "Error: Failed to generate key: " + std::to_string(error);
+        return result::err("Failed to generate key: " + std::to_string(error));
     }
 
-    std::string result(value);
+    const std::string out(value);
     const OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free key id string. Error: %d\n", free_status);
     }
-    return result;
+    return result::ok(out);
 }
 
-std::string LogosBlockchainModule::add_key(
+StdLogosResult LogosBlockchainModule::add_key(
     const std::string& user_config_path,
     const std::string& keystore_path,
     const std::string& key_type,
@@ -460,23 +489,22 @@ std::string LogosBlockchainModule::add_key(
     KeyType type{};
     if (!parse_key_type(key_type, type)) {
         fprintf(stderr, "Invalid key_type (expected \"ed25519\" or \"zk\").\n");
-        return "1";
+        return result::err(R"(Invalid key_type (expected "ed25519" or "zk").)");
     }
 
     const std::string config = localPathFromFileUrl(user_config_path);
     const std::string keystore = localPathFromFileUrl(keystore_path);
     const char* key_title_ptr = key_title.empty() ? nullptr : key_title.c_str();
 
-    const OperationStatus status =
-        ::add_key(config.c_str(), keystore.c_str(), type, key_hex.c_str(), key_title_ptr);
+    const OperationStatus status = ::add_key(config.c_str(), keystore.c_str(), type, key_hex.c_str(), key_title_ptr);
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to add key. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to add key.");
     }
-    return "0";
+    return result::ok();
 }
 
-std::string LogosBlockchainModule::remove_key(
+StdLogosResult LogosBlockchainModule::remove_key(
     const std::string& user_config_path,
     const std::string& keystore_path,
     const std::string& key_title
@@ -487,60 +515,60 @@ std::string LogosBlockchainModule::remove_key(
     const OperationStatus status = ::remove_key(config.c_str(), keystore.c_str(), key_title.c_str());
     if (!is_ok(&status)) {
         fprintf(stderr, "Failed to remove key. Error: %d\n", status);
-        return "1";
+        return result::err("Failed to remove key.");
     }
-    return "0";
+    return result::ok();
 }
 
 // Identity
 
-std::string LogosBlockchainModule::get_peer_id(const std::string& config_path) {
+StdLogosResult LogosBlockchainModule::get_peer_id(const std::string& config_path) {
     const std::string config = localPathFromFileUrl(config_path);
 
     auto [value, error] = ::get_peer_id(config.c_str());
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get peer id. Error: %d\n", error);
-        return "Error: Failed to get peer id: " + std::to_string(error);
+        return result::err("Failed to get peer id: " + std::to_string(error));
     }
 
-    std::string result(value);
+    const std::string out(value);
     const OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free peer id string. Error: %d\n", free_status);
     }
-    return result;
+    return result::ok(out);
 }
 
 // Wallet
 
-std::string LogosBlockchainModule::wallet_get_balance(const std::string& address_hex) {
+StdLogosResult LogosBlockchainModule::wallet_get_balance(const std::string& address_hex) const {
     fprintf(stderr, "wallet_get_balance: address_hex=%s\n", address_hex.c_str());
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> bytes = parse_address_hex(address_hex);
     if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Address must be 64 hex characters (32 bytes).";
+        return result::err("Address must be 64 hex characters (32 bytes).");
     }
 
     auto [value, error] = get_balance(node, bytes.data(), nullptr);
     if (!is_ok(&error)) {
-        return "Error: Failed to get balance: " + std::to_string(error);
+        return result::err("Failed to get balance: " + std::to_string(error));
     }
 
-    return std::to_string(value);
+    return result::ok(std::to_string(value));
 }
 
-std::string LogosBlockchainModule::wallet_transfer_funds(
+StdLogosResult LogosBlockchainModule::wallet_transfer_funds(
     const std::string& change_public_key,
     const std::vector<std::string>& sender_addresses,
     const std::string& recipient_address,
     const std::string& amount,
     const std::string& optional_tip_hex
-) {
+) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     std::string amount_trimmed = amount;
@@ -548,25 +576,25 @@ std::string LogosBlockchainModule::wallet_transfer_funds(
     uint64_t amount_val = 0;
     auto [ptr, ec] = std::from_chars(amount_trimmed.data(), amount_trimmed.data() + amount_trimmed.size(), amount_val);
     if (ec != std::errc{} || ptr != amount_trimmed.data() + amount_trimmed.size() || amount_trimmed.empty()) {
-        return "Error: Invalid amount (positive integer required).";
+        return result::err("Invalid amount (positive integer required).");
     }
 
     const std::vector<uint8_t> change_bytes = parse_address_hex(change_public_key);
     if (change_bytes.empty() || static_cast<int>(change_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid change_public_key (64 hex characters required).";
+        return result::err("Invalid change_public_key (64 hex characters required).");
     }
     const std::vector<uint8_t> recipient_bytes = parse_address_hex(recipient_address);
     if (recipient_bytes.empty() || static_cast<int>(recipient_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid recipient_address (64 hex characters required).";
+        return result::err("Invalid recipient_address (64 hex characters required).");
     }
     if (sender_addresses.empty()) {
-        return "Error: At least one sender address required.";
+        return result::err("At least one sender address is required.");
     }
     std::vector<std::vector<uint8_t>> funding_bytes;
     for (const std::string& hex : sender_addresses) {
         std::vector<uint8_t> b = parse_address_hex(hex);
         if (b.empty() || static_cast<int>(b.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid sender address (64 hex characters required).";
+            return result::err("Invalid sender address (64 hex characters required).");
         }
         funding_bytes.push_back(std::move(b));
     }
@@ -579,7 +607,7 @@ std::string LogosBlockchainModule::wallet_transfer_funds(
     if (!optional_tip_hex.empty()) {
         tip_bytes = parse_address_hex(optional_tip_hex);
         if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid optional tip (64 hex characters or empty).";
+            return result::err("Invalid optional tip (64 hex characters or empty).");
         }
         optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
     }
@@ -594,23 +622,24 @@ std::string LogosBlockchainModule::wallet_transfer_funds(
 
     auto [value, error] = transfer_funds(node, &args);
     if (!is_ok(&error)) {
-        return "Error: Failed to transfer funds: " + std::to_string(error);
+        return result::err("Failed to transfer funds: " + std::to_string(error));
     }
-    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES));
 }
 
-std::vector<std::string> LogosBlockchainModule::wallet_get_known_addresses() {
-    std::vector<std::string> out;
+StdLogosResult LogosBlockchainModule::wallet_get_known_addresses() const {
     if (!node) {
         fprintf(stderr, "Could not execute the operation: The node is not running.\n");
-        return out;
+        return result::err("The node is not running.");
     }
     auto [value, error] = get_known_addresses(node);
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get known addresses. Error: %d\n", error);
-        return out;
+        return result::err("Failed to get known addresses: " + std::to_string(error));
     }
+    std::vector<std::string> out;
     for (size_t i = 0; i < value.len; ++i) {
+        // ReSharper disable once CppTooWideScope
         const uint8_t* ptr = value.addresses[i];
         if (ptr) {
             out.push_back(bytes_to_hex(ptr, ADDRESS_BYTES));
@@ -620,22 +649,26 @@ std::vector<std::string> LogosBlockchainModule::wallet_get_known_addresses() {
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free known addresses. Error: %d\n", free_status);
     }
-    fprintf(stderr, "blockchain lib: known addresses, count=%zu sample:%s\n",
-            out.size(), out.empty() ? "(none)" : out.front().c_str());
-    return out;
+    fprintf(
+        stderr,
+        "blockchain lib: known addresses, count=%zu sample:%s\n",
+        out.size(),
+        out.empty() ? "(none)" : out.front().c_str()
+    );
+    return result::ok(std::move(out));
 }
 
-std::string LogosBlockchainModule::wallet_get_notes(
+StdLogosResult LogosBlockchainModule::wallet_get_notes(
     const std::string& wallet_address_hex,
     const std::string& optional_tip_hex
-) {
+) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> address_bytes = parse_address_hex(wallet_address_hex);
     if (address_bytes.empty() || static_cast<int>(address_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid wallet address (64 hex characters required).";
+        return result::err("Invalid wallet address (64 hex characters required).");
     }
 
     std::vector<uint8_t> tip_bytes;
@@ -643,25 +676,25 @@ std::string LogosBlockchainModule::wallet_get_notes(
     if (!optional_tip_hex.empty()) {
         tip_bytes = parse_address_hex(optional_tip_hex);
         if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid optional tip (64 hex characters or empty).";
+            return result::err("Invalid optional tip (64 hex characters or empty).");
         }
         optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
     }
 
     auto [value, error] = get_wallet_notes(node, address_bytes.data(), optional_tip);
     if (!is_ok(&error)) {
-        return "Error: Failed to get wallet notes: " + std::to_string(error);
+        return result::err("Failed to get wallet notes: " + std::to_string(error));
     }
 
     json obj;
-    obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value.tip), TX_HASH_BYTES);
+    obj["tip"] = bytes_to_hex(value.tip, TX_HASH_BYTES);
     json notes = json::array();
     for (size_t i = 0; i < value.len; ++i) {
-        const WalletNote& note = value.notes[i];
+        const auto& [note_id, note_value] = value.notes[i];
         json n;
-        n["id"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(note.id), TX_HASH_BYTES);
+        n["id"] = bytes_to_hex(note_id, TX_HASH_BYTES);
         // Value is u64; serialized as a string to avoid JSON number precision loss.
-        n["value"] = std::to_string(note.value);
+        n["value"] = std::to_string(note_value);
         notes.push_back(std::move(n));
     }
     obj["notes"] = std::move(notes);
@@ -670,33 +703,33 @@ std::string LogosBlockchainModule::wallet_get_notes(
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free wallet notes. Error: %d\n", free_status);
     }
-    return obj.dump();
+    return result::ok(obj.dump());
 }
 
-std::string LogosBlockchainModule::leader_claim() {
+StdLogosResult LogosBlockchainModule::leader_claim() const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     auto [value, error] = ::leader_claim(node);
     if (!is_ok(&error)) {
-        return "Error: Failed to claim leader rewards: " + std::to_string(error);
+        return result::err("Failed to claim leader rewards: " + std::to_string(error));
     }
 
-    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES);
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES));
 }
 
 // Channel
 
-std::string LogosBlockchainModule::channel_deposit(
+StdLogosResult LogosBlockchainModule::channel_deposit(
     const std::string& channel_id_hex,
     const std::string& funding_public_key_hex,
     const std::string& amount,
     const std::string& metadata_hex,
     const std::string& optional_tip_hex
-) {
+) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     std::string amount_trimmed = amount;
@@ -704,25 +737,25 @@ std::string LogosBlockchainModule::channel_deposit(
     uint64_t amount_val = 0;
     auto [ptr, ec] = std::from_chars(amount_trimmed.data(), amount_trimmed.data() + amount_trimmed.size(), amount_val);
     if (ec != std::errc{} || ptr != amount_trimmed.data() + amount_trimmed.size() || amount_trimmed.empty()) {
-        return "Error: Invalid amount (positive integer required).";
+        return result::err("Invalid amount (positive integer required).");
     }
     if (amount_val == 0) {
-        return "Error: Invalid amount (must be greater than zero).";
+        return result::err("Invalid amount (must be greater than zero).");
     }
 
     const std::vector<uint8_t> channel_bytes = parse_address_hex(channel_id_hex);
     if (channel_bytes.empty() || static_cast<int>(channel_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid channel_id (64 hex characters required).";
+        return result::err("Invalid channel_id (64 hex characters required).");
     }
 
     const std::vector<uint8_t> funding_bytes = parse_address_hex(funding_public_key_hex);
     if (funding_bytes.empty() || static_cast<int>(funding_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid funding_public_key (64 hex characters required).";
+        return result::err("Invalid funding_public_key (64 hex characters required).");
     }
 
     std::vector<uint8_t> metadata_bytes;
     if (!metadata_hex.empty() && !parse_hex_bytes(metadata_hex, metadata_bytes)) {
-        return "Error: Invalid metadata (even-length hex string required).";
+        return result::err("Invalid metadata (even-length hex string required).");
     }
 
     std::vector<uint8_t> tip_bytes;
@@ -730,7 +763,7 @@ std::string LogosBlockchainModule::channel_deposit(
     if (!optional_tip_hex.empty()) {
         tip_bytes = parse_address_hex(optional_tip_hex);
         if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid optional tip (64 hex characters or empty).";
+            return result::err("Invalid optional tip (64 hex characters or empty).");
         }
         optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
     }
@@ -745,12 +778,12 @@ std::string LogosBlockchainModule::channel_deposit(
 
     auto [value, error] = ::channel_deposit(node, &args);
     if (!is_ok(&error)) {
-        return "Error: Failed to deposit into channel: " + std::to_string(error);
+        return result::err("Failed to deposit into channel: " + std::to_string(error));
     }
-    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES));
 }
 
-std::string LogosBlockchainModule::channel_deposit_with_notes(
+StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
     const std::string& channel_id_hex,
     const std::vector<std::string>& input_note_id_hexes,
     const std::string& metadata_hex,
@@ -758,18 +791,18 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
     const std::vector<std::string>& funding_public_key_hexes,
     const std::string& max_tx_fee,
     const std::string& optional_tip_hex
-) {
+) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> channel_bytes = parse_address_hex(channel_id_hex);
     if (channel_bytes.empty() || static_cast<int>(channel_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid channel_id (64 hex characters required).";
+        return result::err("Invalid channel_id (64 hex characters required).");
     }
 
     if (input_note_id_hexes.empty()) {
-        return "Error: At least one input note required.";
+        return result::err("At least one input note is required.");
     }
     // Note IDs are 32-byte values stored contiguously so the buffer can be passed
     // as a `NoteId` (uint8_t[32]) array.
@@ -778,24 +811,24 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
     for (const std::string& hex : input_note_id_hexes) {
         const std::vector<uint8_t> b = parse_address_hex(hex);
         if (b.empty() || static_cast<int>(b.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid input note id (64 hex characters required).";
+            return result::err("Invalid input note id (64 hex characters required).");
         }
         note_ids_flat.insert(note_ids_flat.end(), b.begin(), b.end());
     }
 
     const std::vector<uint8_t> change_bytes = parse_address_hex(change_public_key_hex);
     if (change_bytes.empty() || static_cast<int>(change_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid change_public_key (64 hex characters required).";
+        return result::err("Invalid change_public_key (64 hex characters required).");
     }
 
     if (funding_public_key_hexes.empty()) {
-        return "Error: At least one funding public key required.";
+        return result::err("At least one funding public key is required.");
     }
     std::vector<std::vector<uint8_t>> funding_bytes;
     for (const std::string& hex : funding_public_key_hexes) {
         std::vector<uint8_t> b = parse_address_hex(hex);
         if (b.empty() || static_cast<int>(b.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid funding public key (64 hex characters required).";
+            return result::err("Invalid funding public key (64 hex characters required).");
         }
         funding_bytes.push_back(std::move(b));
     }
@@ -809,12 +842,12 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
     uint64_t max_tx_fee_val = 0;
     auto [ptr, ec] = std::from_chars(fee_trimmed.data(), fee_trimmed.data() + fee_trimmed.size(), max_tx_fee_val);
     if (ec != std::errc{} || ptr != fee_trimmed.data() + fee_trimmed.size() || fee_trimmed.empty()) {
-        return "Error: Invalid max_tx_fee (non-negative integer required).";
+        return result::err("Invalid max_tx_fee (non-negative integer required).");
     }
 
     std::vector<uint8_t> metadata_bytes;
     if (!metadata_hex.empty() && !parse_hex_bytes(metadata_hex, metadata_bytes)) {
-        return "Error: Invalid metadata (even-length hex string required).";
+        return result::err("Invalid metadata (even-length hex string required).");
     }
 
     std::vector<uint8_t> tip_bytes;
@@ -822,7 +855,7 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
     if (!optional_tip_hex.empty()) {
         tip_bytes = parse_address_hex(optional_tip_hex);
         if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
-            return "Error: Invalid optional tip (64 hex characters or empty).";
+            return result::err("Invalid optional tip (64 hex characters or empty).");
         }
         optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
     }
@@ -841,19 +874,19 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
 
     auto [value, error] = ::channel_deposit_with_notes(node, &args);
     if (!is_ok(&error)) {
-        return "Error: Failed to deposit into channel: " + std::to_string(error);
+        return result::err("Failed to deposit into channel: " + std::to_string(error));
     }
-    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES));
 }
 
-std::string LogosBlockchainModule::wallet_get_claimable_vouchers() {
+StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     auto [value, error] = get_claimable_vouchers(node, nullptr);
     if (!is_ok(&error)) {
-        return "Error: Failed to get claimable vouchers: " + std::to_string(error);
+        return result::err("Failed to get claimable vouchers: " + std::to_string(error));
     }
 
     json obj;
@@ -861,10 +894,10 @@ std::string LogosBlockchainModule::wallet_get_claimable_vouchers() {
     obj["vouchers"] = json::array();
 
     for (size_t i = 0; i < value.len; ++i) {
-        const ClaimableVoucher& voucher = value.vouchers[i];
+        const auto& [commitment, nullifier] = value.vouchers[i];
         obj["vouchers"].push_back({
-            {"commitment", bytes_to_hex(reinterpret_cast<const uint8_t*>(&voucher.commitment), ADDRESS_BYTES)},
-            {"nullifier", bytes_to_hex(reinterpret_cast<const uint8_t*>(&voucher.nullifier), ADDRESS_BYTES)},
+            {"commitment", bytes_to_hex(reinterpret_cast<const uint8_t*>(&commitment), ADDRESS_BYTES)},
+            {"nullifier", bytes_to_hex(reinterpret_cast<const uint8_t*>(&nullifier), ADDRESS_BYTES)},
         });
     }
 
@@ -873,37 +906,37 @@ std::string LogosBlockchainModule::wallet_get_claimable_vouchers() {
         fprintf(stderr, "Failed to free claimable vouchers. Error: %d\n", free_status);
     }
 
-    return obj.dump();
+    return result::ok(obj.dump());
 }
 
 // Blend
 
-std::string LogosBlockchainModule::blend_join_as_core_node(
+StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     const std::string& provider_id_hex,
     const std::string& zk_id_hex,
     const std::string& locked_note_id_hex,
     const std::vector<std::string>& locators
-) {
+) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> provider_id_bytes = parse_address_hex(provider_id_hex);
     if (provider_id_bytes.empty() || static_cast<int>(provider_id_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid provider_id_hex (64 hex characters required).";
+        return result::err("Invalid provider_id_hex (64 hex characters required).");
     }
 
     const std::vector<uint8_t> zk_id_bytes = parse_address_hex(zk_id_hex);
     if (zk_id_bytes.empty() || static_cast<int>(zk_id_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid zk_id_hex (64 hex characters required).";
+        return result::err("Invalid zk_id_hex (64 hex characters required).");
     }
 
     const std::vector<uint8_t> locked_note_id_bytes = parse_address_hex(locked_note_id_hex);
     if (locked_note_id_bytes.empty() || static_cast<int>(locked_note_id_bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Invalid locked_note_id_hex (64 hex characters required).";
+        return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    // locators_ptrs holds raw pointers into the std::strings (valid as long as locators lives).
+    // locators_ptrs holds raw pointers into the std::strings (valid as long as `locators` lives).
     std::vector<const char*> locators_ptrs;
     locators_ptrs.reserve(locators.size());
     for (const std::string& locator : locators) {
@@ -919,94 +952,94 @@ std::string LogosBlockchainModule::blend_join_as_core_node(
         locators_ptrs.size()
     );
     if (!is_ok(&error)) {
-        return "Error: Failed to join as core node: " + std::to_string(error);
+        return result::err("Failed to join as core node: " + std::to_string(error));
     }
 
     std::string declaration_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
-    fprintf(stderr, "Successfully joined as core node. DeclarationId: %s\n", declaration_id.c_str());
-    return declaration_id;
+    fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
+    return result::ok(std::move(declaration_id));
 }
 
 // Explorer
 
-std::string LogosBlockchainModule::get_block(const std::string& header_id_hex) {
+StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> bytes = parse_address_hex(header_id_hex);
     if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Header ID must be 64 hex characters (32 bytes).";
+        return result::err("Header ID must be 64 hex characters (32 bytes).");
     }
 
     auto [value, error] = ::get_block(node, reinterpret_cast<const HeaderId*>(bytes.data()));
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get block. Error: %d\n", error);
-        return "Error: Failed to get block: " + std::to_string(error);
+        return result::err("Failed to get block: " + std::to_string(error));
     }
 
-    std::string result(value);
+    std::string out(value);
     const OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free block string. Error: %d\n", free_status);
     }
-    return result;
+    return result::ok(std::move(out));
 }
 
-std::string LogosBlockchainModule::get_blocks(const uint64_t from_slot, const uint64_t to_slot) {
+StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const uint64_t to_slot) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     auto [value, error] = ::get_blocks(node, from_slot, to_slot);
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get blocks. Error: %d\n", error);
-        return "Error: Failed to get blocks: " + std::to_string(error);
+        return result::err("Failed to get blocks: " + std::to_string(error));
     }
 
-    std::string result(value);
+    std::string out(value);
     const OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free blocks string. Error: %d\n", free_status);
     }
-    return result;
+    return result::ok(std::move(out));
 }
 
-std::string LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) {
+StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     const std::vector<uint8_t> bytes = parse_address_hex(tx_hash_hex);
     if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
-        return "Error: Transaction hash must be 64 hex characters (32 bytes).";
+        return result::err("Transaction hash must be 64 hex characters (32 bytes).");
     }
 
     auto [value, error] = ::get_transaction(node, reinterpret_cast<const TxHash*>(bytes.data()));
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get transaction. Error: %d\n", error);
-        return "Error: Failed to get transaction: " + std::to_string(error);
+        return result::err("Failed to get transaction: " + std::to_string(error));
     }
 
-    std::string result(value);
+    std::string out(value);
     const OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free transaction string. Error: %d\n", free_status);
     }
-    return result;
+    return result::ok(std::move(out));
 }
 
 // Cryptarchia
 
-std::string LogosBlockchainModule::get_cryptarchia_info() {
+StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     if (!node) {
-        return "Error: The node is not running.";
+        return result::err("The node is not running.");
     }
 
     auto [value, error] = ::get_cryptarchia_info(node);
     if (!is_ok(&error)) {
         fprintf(stderr, "Failed to get cryptarchia info. Error: %d\n", error);
-        return "Error: Failed to get cryptarchia info: " + std::to_string(error);
+        return result::err("Failed to get cryptarchia info: " + std::to_string(error));
     }
 
     json obj;
@@ -1020,5 +1053,5 @@ std::string LogosBlockchainModule::get_cryptarchia_info() {
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free cryptarchia info. Error: %d\n", free_status);
     }
-    return obj.dump();
+    return result::ok(obj.dump());
 }
