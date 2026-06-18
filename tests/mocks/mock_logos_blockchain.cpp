@@ -169,6 +169,58 @@ OperationStatus free_known_addresses(KnownAddresses addrs) {
     return 0;
 }
 
+// Wallet-notes mock storage (up to 4 notes)
+static WalletNote s_mockNotes[4];
+
+FfiWalletNotesResult get_wallet_notes(
+    LogosBlockchainNode* node,
+    const uint8_t* wallet_address,
+    const HeaderId* optional_tip)
+{
+    LOGOS_CMOCK_RECORD("get_wallet_notes");
+    FfiWalletNotesResult result;
+    memset(&result.value, 0, sizeof(WalletNotes));
+    int err = LOGOS_CMOCK_RETURN(int, "get_wallet_notes_error");
+    result.error = err;
+    if (err == 0) {
+        int count = LOGOS_CMOCK_RETURN(int, "get_wallet_notes_count");
+        if (count > 4) count = 4;
+        if (count < 0) count = 0;
+        for (int i = 0; i < count; ++i) {
+            memset(s_mockNotes[i].id, 0x10 + i, sizeof(NoteId));
+            s_mockNotes[i].value = static_cast<uint64_t>(100 * (i + 1));
+        }
+        memset(result.value.tip, 0xFF, sizeof(HeaderId));
+        result.value.notes = count > 0 ? s_mockNotes : nullptr;
+        result.value.len = static_cast<size_t>(count);
+    }
+    return result;
+}
+
+OperationStatus free_wallet_notes(WalletNotes notes) {
+    LOGOS_CMOCK_RECORD("free_wallet_notes");
+    return 0;
+}
+
+FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments) {
+    LOGOS_CMOCK_RECORD("channel_deposit");
+    FfiChannelDepositResult result;
+    memset(result.value, 0xBC, sizeof(Hash));
+    result.error = LOGOS_CMOCK_RETURN(int, "channel_deposit_error");
+    return result;
+}
+
+FfiChannelDepositResult channel_deposit_with_notes(
+    LogosBlockchainNode* node,
+    const ChannelDepositWithNotesArguments* arguments)
+{
+    LOGOS_CMOCK_RECORD("channel_deposit_with_notes");
+    FfiChannelDepositResult result;
+    memset(result.value, 0xDE, sizeof(Hash));
+    result.error = LOGOS_CMOCK_RETURN(int, "channel_deposit_with_notes_error");
+    return result;
+}
+
 BlendHashResult blend_join_as_core_node(
     LogosBlockchainNode* node,
     const uint8_t* provider_id,
