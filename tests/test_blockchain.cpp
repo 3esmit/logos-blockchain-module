@@ -881,6 +881,40 @@ LOGOS_TEST(wallet_get_known_addresses_returns_empty_on_ffi_failure) {
     delete module;
 }
 
+LOGOS_TEST(wallet_get_claimable_vouchers_returns_json) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_claimable_vouchers_error").returns(0);
+    t.mockCFunction("get_claimable_vouchers_count").returns(2);
+
+    std::string result = module->wallet_get_claimable_vouchers();
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "\"vouchers\""));
+    LOGOS_ASSERT_TRUE(contains(result, std::string(64, 'a')));
+    LOGOS_ASSERT_TRUE(contains(result, std::string(64, '1')));
+    LOGOS_ASSERT_TRUE(contains(result, "20202020"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_claimable_vouchers"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_claimable_vouchers"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_claimable_vouchers_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_claimable_vouchers_error").returns(1);
+
+    std::string result = module->wallet_get_claimable_vouchers();
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "Failed to get claimable vouchers"));
+    delete module;
+}
+
 // Blend
 
 LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {

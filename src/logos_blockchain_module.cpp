@@ -846,6 +846,36 @@ std::string LogosBlockchainModule::channel_deposit_with_notes(
     return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
 }
 
+std::string LogosBlockchainModule::wallet_get_claimable_vouchers() {
+    if (!node) {
+        return "Error: The node is not running.";
+    }
+
+    auto [value, error] = get_claimable_vouchers(node, nullptr);
+    if (!is_ok(&error)) {
+        return "Error: Failed to get claimable vouchers: " + std::to_string(error);
+    }
+
+    json obj;
+    obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value.tip), ADDRESS_BYTES);
+    obj["vouchers"] = json::array();
+
+    for (size_t i = 0; i < value.len; ++i) {
+        const ClaimableVoucher& voucher = value.vouchers[i];
+        obj["vouchers"].push_back({
+            {"commitment", bytes_to_hex(reinterpret_cast<const uint8_t*>(&voucher.commitment), ADDRESS_BYTES)},
+            {"nullifier", bytes_to_hex(reinterpret_cast<const uint8_t*>(&voucher.nullifier), ADDRESS_BYTES)},
+        });
+    }
+
+    const OperationStatus free_status = free_claimable_vouchers(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free claimable vouchers. Error: %d\n", free_status);
+    }
+
+    return obj.dump();
+}
+
 // Blend
 
 std::string LogosBlockchainModule::blend_join_as_core_node(
@@ -992,4 +1022,3 @@ std::string LogosBlockchainModule::get_cryptarchia_info() {
     }
     return obj.dump();
 }
-

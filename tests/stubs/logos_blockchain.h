@@ -85,6 +85,17 @@ typedef struct {
     size_t len;
 } KnownAddresses;
 
+typedef struct {
+    Hash commitment;
+    Hash nullifier;
+} ClaimableVoucher;
+
+typedef struct {
+    HeaderId tip;
+    ClaimableVoucher* vouchers;
+    size_t len;
+} ClaimableVouchers;
+
 // A single spendable wallet note (UTXO): its note ID and value.
 typedef struct {
     NoteId id;
@@ -115,6 +126,7 @@ typedef struct { TxHash value; OperationStatus error; } FfiLeaderClaimResult;
 typedef struct { Hash value; OperationStatus error; } FfiChannelDepositResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
 typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResult;
+typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableVouchersResult;
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
@@ -181,6 +193,8 @@ FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const Channel
 FfiChannelDepositResult channel_deposit_with_notes(
     LogosBlockchainNode* node,
     const ChannelDepositWithNotesArguments* arguments);
+FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip);
+OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers);
 
 // Blend
 BlendHashResult blend_join_as_core_node(

@@ -84,6 +84,7 @@ public:
         const std::string& optional_tip_hex
     );
     std::string leader_claim();
+    std::string wallet_get_claimable_vouchers();
 
     // Channel
     // Amount-based deposit: the binding selects funding notes itself (splitting a

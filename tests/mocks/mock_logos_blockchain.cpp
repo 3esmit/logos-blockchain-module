@@ -16,6 +16,7 @@ static uint8_t s_mockAddr1[32];
 static uint8_t s_mockAddr2[32];
 static uint8_t s_mockAddr3[32];
 static uint8_t* s_mockAddrs[] = { s_mockAddr0, s_mockAddr1, s_mockAddr2, s_mockAddr3 };
+static ClaimableVoucher s_mockClaimableVouchers[4];
 
 extern "C" {
 
@@ -166,6 +167,34 @@ KnownAddressesResult get_known_addresses(LogosBlockchainNode* node) {
 
 OperationStatus free_known_addresses(KnownAddresses addrs) {
     LOGOS_CMOCK_RECORD("free_known_addresses");
+    return 0;
+}
+
+FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip) {
+    LOGOS_CMOCK_RECORD("get_claimable_vouchers");
+    FfiClaimableVouchersResult result;
+    int err = LOGOS_CMOCK_RETURN(int, "get_claimable_vouchers_error");
+    result.error = err;
+    if (err == 0) {
+        int count = LOGOS_CMOCK_RETURN(int, "get_claimable_vouchers_count");
+        if (count > 4) count = 4;
+        memset(result.value.tip, 0xAA, sizeof(HeaderId));
+        for (int i = 0; i < count; ++i) {
+            memset(s_mockClaimableVouchers[i].commitment, 0x10 + i, sizeof(Hash));
+            memset(s_mockClaimableVouchers[i].nullifier, 0x20 + i, sizeof(Hash));
+        }
+        result.value.vouchers = s_mockClaimableVouchers;
+        result.value.len = static_cast<size_t>(count);
+    } else {
+        memset(result.value.tip, 0, sizeof(HeaderId));
+        result.value.vouchers = nullptr;
+        result.value.len = 0;
+    }
+    return result;
+}
+
+OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers) {
+    LOGOS_CMOCK_RECORD("free_claimable_vouchers");
     return 0;
 }
 
