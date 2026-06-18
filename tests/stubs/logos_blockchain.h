@@ -16,6 +16,7 @@ extern "C" {
 typedef uint8_t Hash[32];
 typedef uint8_t HeaderId[32];
 typedef uint8_t TxHash[32];
+typedef Hash NoteId;
 
 // Opaque node handle
 typedef struct LogosBlockchainNode LogosBlockchainNode;
@@ -54,11 +55,48 @@ typedef struct {
     uint64_t amount;
 } TransferFundsArguments;
 
+// Arguments for channel_deposit (amount-based)
+typedef struct {
+    const HeaderId* optional_tip;
+    const uint8_t* channel_id;
+    const uint8_t* funding_public_key;
+    uint64_t amount;
+    const uint8_t* metadata;
+    size_t metadata_len;
+} ChannelDepositArguments;
+
+// Arguments for channel_deposit_with_notes (note-based)
+typedef struct {
+    const HeaderId* optional_tip;
+    const uint8_t* channel_id;
+    const NoteId* input_note_ids;
+    size_t input_note_ids_len;
+    const uint8_t* metadata;
+    size_t metadata_len;
+    const uint8_t* change_public_key;
+    const uint8_t* const* funding_public_keys;
+    size_t funding_public_keys_len;
+    uint64_t max_tx_fee;
+} ChannelDepositWithNotesArguments;
+
 // Known addresses result container
 typedef struct {
     uint8_t** addresses;
     size_t len;
 } KnownAddresses;
+
+// A single spendable wallet note (UTXO): its note ID and value.
+typedef struct {
+    NoteId id;
+    uint64_t value;
+} WalletNote;
+
+// The set of spendable notes for a wallet address at a given tip.
+typedef struct {
+    HeaderId tip;
+    WalletNote* notes;
+    size_t len;
+} WalletNotes;
 
 // Cryptarchia consensus info
 typedef struct {
@@ -74,7 +112,9 @@ typedef struct { LogosBlockchainNode* value; OperationStatus error; } NodeResult
 typedef struct { uint64_t value; OperationStatus error; } BalanceResult;
 typedef struct { Hash value; OperationStatus error; } TransferHashResult;
 typedef struct { TxHash value; OperationStatus error; } FfiLeaderClaimResult;
+typedef struct { Hash value; OperationStatus error; } FfiChannelDepositResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
+typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResult;
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
@@ -130,6 +170,17 @@ TransferHashResult transfer_funds(LogosBlockchainNode* node, const TransferFunds
 FfiLeaderClaimResult leader_claim(LogosBlockchainNode* node);
 KnownAddressesResult get_known_addresses(LogosBlockchainNode* node);
 OperationStatus free_known_addresses(KnownAddresses addrs);
+FfiWalletNotesResult get_wallet_notes(
+    LogosBlockchainNode* node,
+    const uint8_t* wallet_address,
+    const HeaderId* optional_tip);
+OperationStatus free_wallet_notes(WalletNotes notes);
+
+// Channel
+FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments);
+FfiChannelDepositResult channel_deposit_with_notes(
+    LogosBlockchainNode* node,
+    const ChannelDepositWithNotesArguments* arguments);
 
 // Blend
 BlendHashResult blend_join_as_core_node(

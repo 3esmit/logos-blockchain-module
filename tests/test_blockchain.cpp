@@ -156,6 +156,31 @@ LOGOS_TEST(leader_claim_without_node_returns_error) {
     LOGOS_ASSERT_TRUE(contains(result, "not running"));
 }
 
+LOGOS_TEST(channel_deposit_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    std::string result = module.channel_deposit(VALID_HEX, VALID_HEX, "100", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "not running"));
+}
+
+LOGOS_TEST(channel_deposit_with_notes_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    std::string result = module.channel_deposit_with_notes(
+        VALID_HEX, {VALID_HEX}, "", VALID_HEX, {VALID_HEX}, "0", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "not running"));
+}
+
+LOGOS_TEST(wallet_get_notes_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    std::string result = module.wallet_get_notes(VALID_HEX, "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "not running"));
+}
+
 LOGOS_TEST(wallet_get_known_addresses_without_node_returns_empty) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
@@ -532,6 +557,267 @@ LOGOS_TEST(leader_claim_returns_error_on_ffi_failure) {
     std::string result = module->leader_claim();
     LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
     LOGOS_ASSERT_TRUE(contains(result, "Failed to claim leader rewards"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_returns_tx_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("channel_deposit_error").returns(0);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "500", "", "");
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_EQ(static_cast<int>(result.length()), 64);
+    LOGOS_ASSERT_TRUE(starts_with(result, "bc"));
+    LOGOS_ASSERT(t.cFunctionCalled("channel_deposit"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_metadata_and_tip) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("channel_deposit_error").returns(0);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "100", "deadbeef", VALID_HEX);
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_EQ(static_cast<int>(result.length()), 64);
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("channel_deposit_error").returns(1);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "100", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "Failed to deposit into channel"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_invalid_amount) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "not_a_number", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "amount"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_zero_amount) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "0", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "amount"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_invalid_channel_id) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit("bad", VALID_HEX, "100", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "channel_id"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_invalid_funding_key) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit(VALID_HEX, "short", "100", "", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "funding_public_key"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_invalid_metadata) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "100", "xyz", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "metadata"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_rejects_invalid_optional_tip) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit(VALID_HEX, VALID_HEX, "100", "", "bad_tip");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "tip"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_notes_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_wallet_notes_error").returns(0);
+    t.mockCFunction("get_wallet_notes_count").returns(2);
+
+    std::string result = module->wallet_get_notes(VALID_HEX, "");
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "\"tip\""));
+    LOGOS_ASSERT_TRUE(contains(result, "\"notes\""));
+    LOGOS_ASSERT_TRUE(contains(result, "\"value\":\"100\""));
+    LOGOS_ASSERT_TRUE(contains(result, "\"value\":\"200\""));
+    LOGOS_ASSERT(t.cFunctionCalled("get_wallet_notes"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_wallet_notes"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_notes_returns_empty_notes_array) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_wallet_notes_error").returns(0);
+    t.mockCFunction("get_wallet_notes_count").returns(0);
+
+    std::string result = module->wallet_get_notes(VALID_HEX, "");
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "\"notes\":[]"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_notes_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_wallet_notes_error").returns(1);
+
+    std::string result = module->wallet_get_notes(VALID_HEX, "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "Failed to get wallet notes"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_notes_rejects_invalid_address) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->wallet_get_notes("bad", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "wallet address"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_returns_tx_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("channel_deposit_with_notes_error").returns(0);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {VALID_HEX}, "deadbeef", VALID_HEX, {VALID_HEX}, "1000", "");
+    LOGOS_ASSERT_FALSE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_EQ(static_cast<int>(result.length()), 64);
+    LOGOS_ASSERT_TRUE(starts_with(result, "de"));
+    LOGOS_ASSERT(t.cFunctionCalled("channel_deposit_with_notes"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("channel_deposit_with_notes_error").returns(1);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {VALID_HEX}, "", VALID_HEX, {VALID_HEX}, "0", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "Failed to deposit into channel"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_rejects_empty_notes) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {}, "", VALID_HEX, {VALID_HEX}, "0", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "input note"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_rejects_invalid_note_id) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {"bad"}, "", VALID_HEX, {VALID_HEX}, "0", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "input note id"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_rejects_empty_funding_keys) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {VALID_HEX}, "", VALID_HEX, {}, "0", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "funding public key"));
+    delete module;
+}
+
+LOGOS_TEST(channel_deposit_with_notes_rejects_invalid_max_tx_fee) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::string result = module->channel_deposit_with_notes(
+        VALID_HEX, {VALID_HEX}, "", VALID_HEX, {VALID_HEX}, "not_a_number", "");
+    LOGOS_ASSERT_TRUE(starts_with(result, "Error:"));
+    LOGOS_ASSERT_TRUE(contains(result, "max_tx_fee"));
     delete module;
 }
 

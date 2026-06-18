@@ -48,6 +48,27 @@ namespace {
         }
     }
 
+    // Parse arbitrary-length hex (optional 0x prefix) into bytes. Unlike
+    // parse_address_hex this does not enforce a fixed length; used for the
+    // variable-length channel deposit metadata. Returns false on odd length or
+    // non-hex input.
+    bool parse_hex_bytes(const std::string& hex_in, std::vector<uint8_t>& out) {
+        std::string hex = hex_in;
+        boost::algorithm::trim(hex);
+        if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
+            hex = hex.substr(2);
+        if (hex.size() % 2 != 0)
+            return false;
+        try {
+            std::string decoded;
+            boost::algorithm::unhex(hex.begin(), hex.end(), std::back_inserter(decoded));
+            out.assign(decoded.begin(), decoded.end());
+            return true;
+        } catch (const boost::algorithm::non_hex_input&) {
+            return false;
+        }
+    }
+
     std::string bytes_to_hex(const uint8_t* data, size_t len) {
         std::string out;
         out.reserve(len * 2);
@@ -604,6 +625,54 @@ std::vector<std::string> LogosBlockchainModule::wallet_get_known_addresses() {
     return out;
 }
 
+std::string LogosBlockchainModule::wallet_get_notes(
+    const std::string& wallet_address_hex,
+    const std::string& optional_tip_hex
+) {
+    if (!node) {
+        return "Error: The node is not running.";
+    }
+
+    const std::vector<uint8_t> address_bytes = parse_address_hex(wallet_address_hex);
+    if (address_bytes.empty() || static_cast<int>(address_bytes.size()) != ADDRESS_BYTES) {
+        return "Error: Invalid wallet address (64 hex characters required).";
+    }
+
+    std::vector<uint8_t> tip_bytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.empty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
+            return "Error: Invalid optional tip (64 hex characters or empty).";
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
+    }
+
+    auto [value, error] = get_wallet_notes(node, address_bytes.data(), optional_tip);
+    if (!is_ok(&error)) {
+        return "Error: Failed to get wallet notes: " + std::to_string(error);
+    }
+
+    json obj;
+    obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value.tip), TX_HASH_BYTES);
+    json notes = json::array();
+    for (size_t i = 0; i < value.len; ++i) {
+        const WalletNote& note = value.notes[i];
+        json n;
+        n["id"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(note.id), TX_HASH_BYTES);
+        // Value is u64; serialized as a string to avoid JSON number precision loss.
+        n["value"] = std::to_string(note.value);
+        notes.push_back(std::move(n));
+    }
+    obj["notes"] = std::move(notes);
+
+    const OperationStatus free_status = free_wallet_notes(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free wallet notes. Error: %d\n", free_status);
+    }
+    return obj.dump();
+}
+
 std::string LogosBlockchainModule::leader_claim() {
     if (!node) {
         return "Error: The node is not running.";
@@ -615,6 +684,166 @@ std::string LogosBlockchainModule::leader_claim() {
     }
 
     return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES);
+}
+
+// Channel
+
+std::string LogosBlockchainModule::channel_deposit(
+    const std::string& channel_id_hex,
+    const std::string& funding_public_key_hex,
+    const std::string& amount,
+    const std::string& metadata_hex,
+    const std::string& optional_tip_hex
+) {
+    if (!node) {
+        return "Error: The node is not running.";
+    }
+
+    std::string amount_trimmed = amount;
+    boost::algorithm::trim(amount_trimmed);
+    uint64_t amount_val = 0;
+    auto [ptr, ec] = std::from_chars(amount_trimmed.data(), amount_trimmed.data() + amount_trimmed.size(), amount_val);
+    if (ec != std::errc{} || ptr != amount_trimmed.data() + amount_trimmed.size() || amount_trimmed.empty()) {
+        return "Error: Invalid amount (positive integer required).";
+    }
+    if (amount_val == 0) {
+        return "Error: Invalid amount (must be greater than zero).";
+    }
+
+    const std::vector<uint8_t> channel_bytes = parse_address_hex(channel_id_hex);
+    if (channel_bytes.empty() || static_cast<int>(channel_bytes.size()) != ADDRESS_BYTES) {
+        return "Error: Invalid channel_id (64 hex characters required).";
+    }
+
+    const std::vector<uint8_t> funding_bytes = parse_address_hex(funding_public_key_hex);
+    if (funding_bytes.empty() || static_cast<int>(funding_bytes.size()) != ADDRESS_BYTES) {
+        return "Error: Invalid funding_public_key (64 hex characters required).";
+    }
+
+    std::vector<uint8_t> metadata_bytes;
+    if (!metadata_hex.empty() && !parse_hex_bytes(metadata_hex, metadata_bytes)) {
+        return "Error: Invalid metadata (even-length hex string required).";
+    }
+
+    std::vector<uint8_t> tip_bytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.empty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
+            return "Error: Invalid optional tip (64 hex characters or empty).";
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
+    }
+
+    ChannelDepositArguments args{};
+    args.optional_tip = optional_tip;
+    args.channel_id = channel_bytes.data();
+    args.funding_public_key = funding_bytes.data();
+    args.amount = amount_val;
+    args.metadata = metadata_bytes.empty() ? nullptr : metadata_bytes.data();
+    args.metadata_len = metadata_bytes.size();
+
+    auto [value, error] = ::channel_deposit(node, &args);
+    if (!is_ok(&error)) {
+        return "Error: Failed to deposit into channel: " + std::to_string(error);
+    }
+    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
+}
+
+std::string LogosBlockchainModule::channel_deposit_with_notes(
+    const std::string& channel_id_hex,
+    const std::vector<std::string>& input_note_id_hexes,
+    const std::string& metadata_hex,
+    const std::string& change_public_key_hex,
+    const std::vector<std::string>& funding_public_key_hexes,
+    const std::string& max_tx_fee,
+    const std::string& optional_tip_hex
+) {
+    if (!node) {
+        return "Error: The node is not running.";
+    }
+
+    const std::vector<uint8_t> channel_bytes = parse_address_hex(channel_id_hex);
+    if (channel_bytes.empty() || static_cast<int>(channel_bytes.size()) != ADDRESS_BYTES) {
+        return "Error: Invalid channel_id (64 hex characters required).";
+    }
+
+    if (input_note_id_hexes.empty()) {
+        return "Error: At least one input note required.";
+    }
+    // Note IDs are 32-byte values stored contiguously so the buffer can be passed
+    // as a `NoteId` (uint8_t[32]) array.
+    std::vector<uint8_t> note_ids_flat;
+    note_ids_flat.reserve(input_note_id_hexes.size() * ADDRESS_BYTES);
+    for (const std::string& hex : input_note_id_hexes) {
+        const std::vector<uint8_t> b = parse_address_hex(hex);
+        if (b.empty() || static_cast<int>(b.size()) != ADDRESS_BYTES) {
+            return "Error: Invalid input note id (64 hex characters required).";
+        }
+        note_ids_flat.insert(note_ids_flat.end(), b.begin(), b.end());
+    }
+
+    const std::vector<uint8_t> change_bytes = parse_address_hex(change_public_key_hex);
+    if (change_bytes.empty() || static_cast<int>(change_bytes.size()) != ADDRESS_BYTES) {
+        return "Error: Invalid change_public_key (64 hex characters required).";
+    }
+
+    if (funding_public_key_hexes.empty()) {
+        return "Error: At least one funding public key required.";
+    }
+    std::vector<std::vector<uint8_t>> funding_bytes;
+    for (const std::string& hex : funding_public_key_hexes) {
+        std::vector<uint8_t> b = parse_address_hex(hex);
+        if (b.empty() || static_cast<int>(b.size()) != ADDRESS_BYTES) {
+            return "Error: Invalid funding public key (64 hex characters required).";
+        }
+        funding_bytes.push_back(std::move(b));
+    }
+    std::vector<const uint8_t*> funding_ptrs;
+    funding_ptrs.reserve(funding_bytes.size());
+    for (const auto& b : funding_bytes)
+        funding_ptrs.push_back(b.data());
+
+    std::string fee_trimmed = max_tx_fee;
+    boost::algorithm::trim(fee_trimmed);
+    uint64_t max_tx_fee_val = 0;
+    auto [ptr, ec] = std::from_chars(fee_trimmed.data(), fee_trimmed.data() + fee_trimmed.size(), max_tx_fee_val);
+    if (ec != std::errc{} || ptr != fee_trimmed.data() + fee_trimmed.size() || fee_trimmed.empty()) {
+        return "Error: Invalid max_tx_fee (non-negative integer required).";
+    }
+
+    std::vector<uint8_t> metadata_bytes;
+    if (!metadata_hex.empty() && !parse_hex_bytes(metadata_hex, metadata_bytes)) {
+        return "Error: Invalid metadata (even-length hex string required).";
+    }
+
+    std::vector<uint8_t> tip_bytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.empty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
+            return "Error: Invalid optional tip (64 hex characters or empty).";
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
+    }
+
+    ChannelDepositWithNotesArguments args{};
+    args.optional_tip = optional_tip;
+    args.channel_id = channel_bytes.data();
+    args.input_note_ids = reinterpret_cast<const NoteId*>(note_ids_flat.data());
+    args.input_note_ids_len = input_note_id_hexes.size();
+    args.metadata = metadata_bytes.empty() ? nullptr : metadata_bytes.data();
+    args.metadata_len = metadata_bytes.size();
+    args.change_public_key = change_bytes.data();
+    args.funding_public_keys = funding_ptrs.data();
+    args.funding_public_keys_len = funding_ptrs.size();
+    args.max_tx_fee = max_tx_fee_val;
+
+    auto [value, error] = ::channel_deposit_with_notes(node, &args);
+    if (!is_ok(&error)) {
+        return "Error: Failed to deposit into channel: " + std::to_string(error);
+    }
+    return bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES);
 }
 
 // Blend

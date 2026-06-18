@@ -75,7 +75,43 @@ public:
         const std::string& optional_tip_hex
     );
     std::vector<std::string> wallet_get_known_addresses();
+    // Spendable notes (UTXOs) of a wallet address, as a JSON string:
+    //   { "tip": "<hex>", "notes": [ { "id": "<hex>", "value": "<u64>" }, ... ] }
+    // optional_tip_hex may be empty to query at the current tip. Note IDs round-trip
+    // into channel_deposit_with_notes.
+    std::string wallet_get_notes(
+        const std::string& wallet_address_hex,
+        const std::string& optional_tip_hex
+    );
     std::string leader_claim();
+
+    // Channel
+    // Amount-based deposit: the binding selects funding notes itself (splitting a
+    // note via a transfer when no exact-value note exists) so the channel receives
+    // exactly `amount`. funding_public_key owns the funding notes, the deposit note
+    // and any change. metadata_hex may be empty; optional_tip_hex may be empty to
+    // build against the current tip. Returns the transaction hash hex on success.
+    std::string channel_deposit(
+        const std::string& channel_id_hex,
+        const std::string& funding_public_key_hex,
+        const std::string& amount,
+        const std::string& metadata_hex,
+        const std::string& optional_tip_hex
+    );
+    // Note-based deposit: the caller supplies the exact notes to consume (their
+    // whole value enters the channel), so amount = sum of the notes' values. Use
+    // wallet_get_notes to obtain note IDs. The gas fee is funded from
+    // funding_public_keys (change to change_public_key), capped at max_tx_fee.
+    // metadata_hex / optional_tip_hex may be empty. Returns the tx hash hex.
+    std::string channel_deposit_with_notes(
+        const std::string& channel_id_hex,
+        const std::vector<std::string>& input_note_id_hexes,
+        const std::string& metadata_hex,
+        const std::string& change_public_key_hex,
+        const std::vector<std::string>& funding_public_key_hexes,
+        const std::string& max_tx_fee,
+        const std::string& optional_tip_hex
+    );
 
     // Blend
     std::string blend_join_as_core_node(
