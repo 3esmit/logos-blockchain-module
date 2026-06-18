@@ -853,16 +853,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1781788313,
-        "narHash": "sha256-FnlpVshUbq0jm5unPjUi/woRBM9wr3a2beVidszbLwM=",
+        "lastModified": 1781792889,
+        "narHash": "sha256-i7zTkYSpQGMBfVvD5mNZ1UBU1Slk0Yi31g2GIHvCSbM=",
         "owner": "logos-co",
         "repo": "logos-module-builder",
-        "rev": "bc868bf47f9d797637ac78af814b0db718dde4b8",
+        "rev": "38ddf92c1f240f4e420d300a1fbabb1609d5db01",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "bc868bf47f9d797637ac78af814b0db718dde4b8",
+        "ref": "38ddf92c1f240f4e420d300a1fbabb1609d5db01",
         "repo": "logos-module-builder",
         "type": "github"
       }
