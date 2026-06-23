@@ -3,8 +3,8 @@
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder?ref=38ddf92c1f240f4e420d300a1fbabb1609d5db01";
-    # v0.1.3-rc.10-compatible + rust-rapidsnark nix fixes + cli commands + leader_claim + channel deposit / wallet notes C bindings + config generation fixes
-    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=0222706b14010fbdfbe9a94d3617ebf46a77fdd1";
+    # https://github.com/logos-blockchain/logos-blockchain/commit/113faae6fd5f68aa70e3cece4fa54f8522c95eec
+    logos-blockchain.url = "github:logos-blockchain/logos-blockchain?ref=113faae6fd5f68aa70e3cece4fa54f8522c95eec";
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
