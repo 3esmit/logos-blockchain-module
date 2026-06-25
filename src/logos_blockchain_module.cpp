@@ -122,6 +122,8 @@ namespace {
         std::string http_addr_data;
         std::string external_address_data;
         std::string state_path_data;
+        std::string storage_path_data;
+        std::string logs_path_data;
         bool ibd_val;
         std::string log_filter_data;
         std::string kms_file_data;
@@ -197,6 +199,22 @@ namespace {
                 ffi_args.state_path = nullptr;
             }
 
+            // storage_path (string -> const char*) — maps to storage.backend.folder_name
+            if (args.contains("storage_path") && args["storage_path"].is_string()) {
+                storage_path_data = args["storage_path"].get<std::string>();
+                ffi_args.storage_path = storage_path_data.c_str();
+            } else {
+                ffi_args.storage_path = nullptr;
+            }
+
+            // logs_path (string -> const char*) — maps to tracing.logger.file.directory
+            if (args.contains("logs_path") && args["logs_path"].is_string()) {
+                logs_path_data = args["logs_path"].get<std::string>();
+                ffi_args.logs_path = logs_path_data.c_str();
+            } else {
+                ffi_args.logs_path = nullptr;
+            }
+
             // ibd (bool -> const bool*)
             if (args.contains("ibd") && args["ibd"].is_boolean()) {
                 ibd_val = args["ibd"].get<bool>();
@@ -223,37 +241,6 @@ namespace {
         }
     };
 } // namespace
-
-namespace environment {
-    constexpr auto LOGOS_BLOCKCHAIN_CIRCUITS = "LOGOS_BLOCKCHAIN_CIRCUITS";
-
-    bool is_circuits_path_valid(const std::string& path) {
-        std::error_code ec;
-        if (!fs::is_directory(path, ec))
-            return false;
-        for (const auto& entry : fs::directory_iterator(path, ec)) { // NOLINT(*-use-anyofallof)
-            if (entry.is_regular_file())
-                return true;
-        }
-        return false;
-    }
-
-    void setup_circuits_path(const std::string& module_path) {
-        const fs::path circuits_path = fs::path(module_path) / "circuits";
-        const std::string circuits_str = circuits_path.string();
-
-        if (!is_circuits_path_valid(circuits_str)) {
-            fprintf(
-                stderr,
-                "FATAL: The LOGOS_BLOCKCHAIN_CIRCUITS environment variable is not set or does not contain any files.\n"
-            );
-            return;
-        }
-
-        setenv("LOGOS_BLOCKCHAIN_CIRCUITS", circuits_str.c_str(), 1);
-        fprintf(stderr, "LOGOS_BLOCKCHAIN_CIRCUITS set to: %s\n", circuits_str.c_str());
-    }
-} // namespace environment
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
     if (s_instance) {
@@ -291,6 +278,75 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
         return result::err(std::string("Failed to parse JSON args: ") + e.what());
     }
 
+    // The module-context getters are populated by every logos-core host
+    // (logoscore-cli and Basecamp alike), so their mere presence can't tell the
+    // two apart. The bundled app therefore opts in explicitly by passing
+    // "use_persistence_paths": true; only then do we route the node's runtime
+    // directories — state, storage (db) and logs — under the host-owned
+    // per-instance persistence dir, so they all share one writable base. CLI and
+    // standalone callers omit the flag and keep their own paths (or the node
+    // defaults). Any path the caller set explicitly is left untouched.
+    bool use_persistence_paths = false;
+    if (const auto it = parsed_args.find("use_persistence_paths");
+        it != parsed_args.end() && it->is_boolean()) {
+        use_persistence_paths = it->get<bool>();
+    }
+    parsed_args.erase("use_persistence_paths"); // not an FFI field
+
+    if (use_persistence_paths) {
+        const std::string& persistence = instancePersistencePath();
+        if (!persistence.empty()) {
+            const fs::path base(persistence);
+            // Only fill a path the caller didn't pin (non-empty string wins).
+            const auto set_if_absent = [&parsed_args](const char* key, const std::string& value) {
+                const bool provided = parsed_args.contains(key)
+                    && parsed_args[key].is_string()
+                    && !parsed_args[key].get<std::string>().empty();
+                if (!provided)
+                    parsed_args[key] = value;
+            };
+            set_if_absent("state_path", (base / "state").string());
+            set_if_absent("storage_path", (base / "db").string());
+            set_if_absent("logs_path", (base / "logs").string());
+
+            // The config file itself is written under the same base, using the
+            // caller's path as the relative part below it ("config/user_config.yaml"
+            // → "<base>/config/user_config.yaml"). Absolute / root-anchored inputs
+            // (e.g. "//user_config.yaml" from QDir::currentPath()=="/") are treated
+            // as relative to the base; a missing output defaults to
+            // "<base>/user_config.yaml".
+            fs::path output_rel = "user_config.yaml";
+            if (parsed_args.contains("output") && parsed_args["output"].is_string()
+                && !parsed_args["output"].get<std::string>().empty()) {
+                const fs::path given(localPathFromFileUrl(parsed_args["output"].get<std::string>()));
+                const fs::path rel = given.relative_path();
+                output_rel = rel.empty() ? given.filename() : rel;
+                if (output_rel.empty())
+                    output_rel = "user_config.yaml";
+            }
+            parsed_args["output"] = (base / output_rel).lexically_normal().string();
+
+            fprintf(
+                stderr,
+                "generate_user_config: routing output/state/storage/logs under instance persistence path: %s\n",
+                persistence.c_str()
+            );
+        } else {
+            fprintf(
+                stderr,
+                "generate_user_config: use_persistence_paths requested but no instance persistence path is set; leaving paths unchanged.\n"
+            );
+        }
+    }
+
+    // The path the config is actually written to (after any persistence routing).
+    // Returned to the caller so it can hand the exact path to start(). Empty only
+    // when no output was given and no routing applied (the node wrote its own
+    // default relative to the cwd, which the module can't resolve).
+    std::string resolved_output;
+    if (parsed_args.contains("output") && parsed_args["output"].is_string())
+        resolved_output = parsed_args["output"].get<std::string>();
+
     const OwnedGenerateConfigArgs owned_args(parsed_args);
 
     const OperationStatus status = ::generate_user_config(owned_args.ffi_args);
@@ -299,20 +355,13 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
         return result::err("Failed to generate user config.");
     }
 
-    return result::ok();
+    return result::ok(resolved_output);
 }
 
 StdLogosResult LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
     if (node) {
         fprintf(stderr, "Could not execute the operation: The node is already running.\n");
         return result::err("The node is already running.");
-    }
-
-    const char* module_path_env = std::getenv("LOGOS_MODULE_PATH");
-    if (module_path_env && *module_path_env) {
-        environment::setup_circuits_path(module_path_env);
-    } else {
-        fprintf(stderr, "Warning: LOGOS_MODULE_PATH not set, skipping circuits' path setup.\n");
     }
 
     std::string effective_config_path = config_path;

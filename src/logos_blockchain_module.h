@@ -26,7 +26,15 @@ public:
     [[nodiscard]] StdLogosResult stop();
 
     // Config management
-    [[nodiscard]] static StdLogosResult generate_user_config(const std::string& json_args);
+    // Not static: when the JSON args set "use_persistence_paths": true it routes
+    // the node's output/state/storage/logs paths under instancePersistencePath()
+    // (config at <base>/<relative output>; state/db/logs at <base>/state, /db,
+    // /logs), so it needs the instance context. Basecamp opts in via that flag;
+    // logoscore-cli/standalone omit it and keep their own paths. An explicit
+    // state/storage/logs path always wins; output is always re-anchored under the
+    // base when flagged. On success the result value is the path the config was
+    // written to — pass it straight to start().
+    [[nodiscard]] StdLogosResult generate_user_config(const std::string& json_args);
     [[nodiscard]] static StdLogosResult update_user_config(
         const std::string& user_config_path,
         const std::string& keystore_path

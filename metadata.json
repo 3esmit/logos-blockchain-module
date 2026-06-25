@@ -20,8 +20,7 @@
     "liblogos_blockchain.dll",
     "liblogos_blockchain_module_plugin.dylib",
     "liblogos_blockchain_module_plugin.so",
-    "liblogos_blockchain_module_plugin.dll",
-    "circuits"
+    "liblogos_blockchain_module_plugin.dll"
   ],
 
   "nix": {

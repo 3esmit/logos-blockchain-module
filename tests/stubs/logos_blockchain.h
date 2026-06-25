@@ -40,6 +40,8 @@ typedef struct {
     const char* http_addr;
     const char* external_address;
     const char* state_path;
+    const char* storage_path;
+    const char* logs_path;
     const bool* ibd;
     const char* log_filter;
     const char* kms_file;

@@ -6,6 +6,15 @@
 #include <logos_blockchain.h>
 #include <cstring>
 #include <cstdlib>
+#include <string>
+
+// Captures the paths passed to the most recent generate_user_config call so tests
+// can assert the module's path routing. A null pointer is recorded as the
+// sentinel "<null>".
+std::string g_lastGeneratedOutput;
+std::string g_lastGeneratedStatePath;
+std::string g_lastGeneratedStoragePath;
+std::string g_lastGeneratedLogsPath;
 
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
@@ -26,6 +35,10 @@ bool is_ok(const OperationStatus* status) {
 
 OperationStatus generate_user_config(GenerateConfigArgs args) {
     LOGOS_CMOCK_RECORD("generate_user_config");
+    g_lastGeneratedOutput = args.output ? args.output : "<null>";
+    g_lastGeneratedStatePath = args.state_path ? args.state_path : "<null>";
+    g_lastGeneratedStoragePath = args.storage_path ? args.storage_path : "<null>";
+    g_lastGeneratedLogsPath = args.logs_path ? args.logs_path : "<null>";
     return LOGOS_CMOCK_RETURN(int, "generate_user_config");
 }
 

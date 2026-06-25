@@ -6,7 +6,6 @@
 
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -40,16 +39,7 @@ struct TempDir {
 };
 
 // Helper: create a module with a running (mocked) node.
-// Sets up circuits directory, LOGOS_MODULE_PATH env, and calls start().
 static LogosBlockchainModule* createStartedModule(LogosTestContext& t, TempDir& tmpDir) {
-    fs::create_directories(tmpDir.path / "circuits");
-    {
-        std::ofstream f((tmpDir.path / "circuits" / "dummy.bin").string());
-        f << "x";
-    }
-
-    setenv("LOGOS_MODULE_PATH", tmpDir.path.string().c_str(), 1);
-
     auto* module = new LogosBlockchainModule();
 
     t.mockCFunction("start_lb_node").returns(1);
@@ -94,6 +84,122 @@ LOGOS_TEST(generate_user_config_from_json_string) {
 
     LOGOS_ASSERT_TRUE(module.generate_user_config(R"({"output":"/tmp/out.json"})").success);
     LOGOS_ASSERT(t.cFunctionCalled("generate_user_config"));
+}
+
+// The mock records the paths handed to the FFI (see mock_logos_blockchain.cpp).
+extern std::string g_lastGeneratedOutput;
+extern std::string g_lastGeneratedStatePath;
+extern std::string g_lastGeneratedStoragePath;
+extern std::string g_lastGeneratedLogsPath;
+
+static void clearGeneratedPaths() {
+    g_lastGeneratedOutput.clear();
+    g_lastGeneratedStatePath.clear();
+    g_lastGeneratedStoragePath.clear();
+    g_lastGeneratedLogsPath.clear();
+}
+
+// Basecamp opts in with the flag: output and state/storage/logs are routed under
+// the per-instance persistence dir. The output keeps its given path as the
+// relative part below the base.
+LOGOS_TEST(generate_user_config_routes_paths_under_persistence_when_flagged) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/mod", "id", "/persist/data");
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    StdLogosResult result =
+        module.generate_user_config(R"({"output":"config/user_config.yaml","use_persistence_paths":true})");
+    LOGOS_ASSERT_TRUE(result.success);
+    // The resolved config path is returned for the caller to hand to start().
+    LOGOS_ASSERT_EQ(result.value.get<std::string>(), std::string("/persist/data/config/user_config.yaml"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedOutput, std::string("/persist/data/config/user_config.yaml"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStatePath, std::string("/persist/data/state"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStoragePath, std::string("/persist/data/db"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedLogsPath, std::string("/persist/data/logs"));
+}
+
+// A root-anchored output (the UI's "//user_config.yaml" artifact) is treated as
+// relative to the base, not written to the read-only filesystem root.
+LOGOS_TEST(generate_user_config_routes_root_anchored_output_under_persistence) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/mod", "id", "/persist/data");
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    LOGOS_ASSERT_TRUE(
+        module.generate_user_config(R"({"output":"//user_config.yaml","use_persistence_paths":true})").success);
+    LOGOS_ASSERT_EQ(g_lastGeneratedOutput, std::string("/persist/data/user_config.yaml"));
+}
+
+// With no output given, the config defaults to <base>/user_config.yaml.
+LOGOS_TEST(generate_user_config_defaults_output_under_persistence) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/mod", "id", "/persist/data");
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    LOGOS_ASSERT_TRUE(module.generate_user_config(R"({"use_persistence_paths":true})").success);
+    LOGOS_ASSERT_EQ(g_lastGeneratedOutput, std::string("/persist/data/user_config.yaml"));
+}
+
+// A host load WITHOUT the flag (e.g. logoscore-cli) does NOT redirect any path,
+// even though the persistence path is populated.
+LOGOS_TEST(generate_user_config_host_without_flag_leaves_paths_unset) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/mod", "id", "/persist/data");
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    StdLogosResult result = module.generate_user_config(R"({"output":"/tmp/out.json"})");
+    LOGOS_ASSERT_TRUE(result.success);
+    // Without routing, the caller's output is returned unchanged.
+    LOGOS_ASSERT_EQ(result.value.get<std::string>(), std::string("/tmp/out.json"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedOutput, std::string("/tmp/out.json"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStatePath, std::string("<null>"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStoragePath, std::string("<null>"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedLogsPath, std::string("<null>"));
+}
+
+// An explicitly provided path wins over the flag; the others are still routed.
+LOGOS_TEST(generate_user_config_explicit_path_wins_over_flag) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/mod", "id", "/persist/data");
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    LOGOS_ASSERT_TRUE(
+        module.generate_user_config(
+            R"({"output":"/tmp/out.json","state_path":"/tmp/state","use_persistence_paths":true})").success);
+    LOGOS_ASSERT_EQ(g_lastGeneratedStatePath, std::string("/tmp/state"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStoragePath, std::string("/persist/data/db"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedLogsPath, std::string("/persist/data/logs"));
+}
+
+// The flag with no host context (standalone) leaves paths unset.
+LOGOS_TEST(generate_user_config_flag_without_context_leaves_paths_unset) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    t.mockCFunction("generate_user_config").returns(0);
+    clearGeneratedPaths();
+
+    LOGOS_ASSERT_TRUE(
+        module.generate_user_config(R"({"output":"/tmp/out.json","use_persistence_paths":true})").success);
+    LOGOS_ASSERT_EQ(g_lastGeneratedOutput, std::string("/tmp/out.json"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStatePath, std::string("<null>"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedStoragePath, std::string("<null>"));
+    LOGOS_ASSERT_EQ(g_lastGeneratedLogsPath, std::string("<null>"));
 }
 
 LOGOS_TEST(generate_user_config_with_all_fields) {
