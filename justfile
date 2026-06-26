@@ -7,7 +7,7 @@ configure:
     cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 build: configure
-    cmake --build build --parallel --target liblogos_blockchain_module_module_plugin
+    cmake --build build --parallel --target blockchain_module_module_plugin
 
 clean:
     rm -rf build result

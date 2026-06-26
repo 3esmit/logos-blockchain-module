@@ -1,7 +1,7 @@
 {
-  "name": "liblogos_blockchain_module",
+  "name": "blockchain_module",
   "display_name": "Blockchain Module",
-  "version": "1.0.0",
+  "version": "0.1.3-rc.13",
   "description": "Logos blockchain node for logos-core",
   "author": "Logos Blockchain Team",
   "type": "core",
@@ -11,16 +11,16 @@
     "impl_class": "LogosBlockchainModule"
   },
   "category": "blockchain",
-  "main": "liblogos_blockchain_module_plugin",
+  "main": "blockchain_module_plugin",
   "dependencies": [],
   "capabilities": [],
   "include": [
     "liblogos_blockchain.dylib",
     "liblogos_blockchain.so",
     "liblogos_blockchain.dll",
-    "liblogos_blockchain_module_plugin.dylib",
-    "liblogos_blockchain_module_plugin.so",
-    "liblogos_blockchain_module_plugin.dll"
+    "blockchain_module_plugin.dylib",
+    "blockchain_module_plugin.so",
+    "blockchain_module_plugin.dll"
   ],
 
   "nix": {

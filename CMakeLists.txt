@@ -9,7 +9,7 @@ endif()
 
 # Universal module — generated_code/ is picked up automatically by LogosModule.cmake
 logos_module(
-    NAME liblogos_blockchain_module
+    NAME blockchain_module
     SOURCES
         src/logos_blockchain_module.h
         src/logos_blockchain_module.cpp
