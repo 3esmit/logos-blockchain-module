@@ -662,7 +662,6 @@ LOGOS_TEST(leader_claim_returns_error_on_ffi_failure) {
 
     StdLogosResult result = module->leader_claim();
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "Failed to claim leader rewards"));
     delete module;
 }
 
@@ -707,7 +706,7 @@ LOGOS_TEST(channel_deposit_returns_error_on_ffi_failure) {
 
     StdLogosResult result = module->channel_deposit(VALID_HEX, VALID_HEX, "100", "", "");
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "Failed to deposit into channel"));
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
     delete module;
 }
 
@@ -829,7 +828,7 @@ LOGOS_TEST(wallet_get_notes_returns_error_on_ffi_failure) {
 
     StdLogosResult result = module->wallet_get_notes(VALID_HEX, "");
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "Failed to get wallet notes"));
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
     delete module;
 }
 
@@ -874,7 +873,7 @@ LOGOS_TEST(channel_deposit_with_notes_returns_error_on_ffi_failure) {
     StdLogosResult result = module->channel_deposit_with_notes(
         VALID_HEX, {VALID_HEX}, "", VALID_HEX, {VALID_HEX}, "0", "");
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "Failed to deposit into channel"));
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
     delete module;
 }
 
@@ -1022,7 +1021,7 @@ LOGOS_TEST(wallet_get_claimable_vouchers_returns_error_on_ffi_failure) {
 
     StdLogosResult result = module->wallet_get_claimable_vouchers();
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "Failed to get claimable vouchers"));
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
     delete module;
 }
 

@@ -34,7 +34,7 @@ public:
     // state/storage/logs path always wins; output is always re-anchored under the
     // base when flagged. On success the result value is the path the config was
     // written to — pass it straight to start().
-    [[nodiscard]] StdLogosResult generate_user_config(const std::string& json_args);
+    [[nodiscard]] StdLogosResult generate_user_config(const std::string& json_args) const;
     [[nodiscard]] static StdLogosResult update_user_config(
         const std::string& user_config_path,
         const std::string& keystore_path

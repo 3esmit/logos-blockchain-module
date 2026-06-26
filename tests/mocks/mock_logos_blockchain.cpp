@@ -27,10 +27,17 @@ static uint8_t s_mockAddr3[32];
 static uint8_t* s_mockAddrs[] = { s_mockAddr0, s_mockAddr1, s_mockAddr2, s_mockAddr3 };
 static ClaimableVoucher s_mockClaimableVouchers[4];
 
+static OperationStatus make_status(int code) {
+    OperationStatus s;
+    s.code = static_cast<OperationStatusCode>(code);
+    s.message = code != 0 ? strdup("mock error") : nullptr;
+    return s;
+}
+
 extern "C" {
 
 bool is_ok(const OperationStatus* status) {
-    return status && *status == 0;
+    return status && status->code == OperationStatusCode_Ok;
 }
 
 OperationStatus generate_user_config(GenerateConfigArgs args) {
@@ -39,7 +46,7 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
     g_lastGeneratedStatePath = args.state_path ? args.state_path : "<null>";
     g_lastGeneratedStoragePath = args.storage_path ? args.storage_path : "<null>";
     g_lastGeneratedLogsPath = args.logs_path ? args.logs_path : "<null>";
-    return LOGOS_CMOCK_RETURN(int, "generate_user_config");
+    return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config"));
 }
 
 NodeResult start_lb_node(const char* config_path, const char* deployment) {
@@ -47,23 +54,23 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
     int ok = LOGOS_CMOCK_RETURN(int, "start_lb_node");
     NodeResult result;
     result.value = ok ? reinterpret_cast<LogosBlockchainNode*>(&s_fakeNode) : nullptr;
-    result.error = ok ? 0 : 1;
+    result.error = make_status(ok ? 0 : 1);
     return result;
 }
 
 OperationStatus stop_node(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("stop_node");
-    return 0;
+    return make_status(0);
 }
 
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path) {
     LOGOS_CMOCK_RECORD("update_user_config");
-    return LOGOS_CMOCK_RETURN(int, "update_user_config");
+    return make_status(LOGOS_CMOCK_RETURN(int, "update_user_config"));
 }
 
 OperationStatus migrate_user_config(const char* output_path, const char* keystore_path) {
     LOGOS_CMOCK_RECORD("migrate_user_config");
-    return LOGOS_CMOCK_RETURN(int, "migrate_user_config");
+    return make_status(LOGOS_CMOCK_RETURN(int, "migrate_user_config"));
 }
 
 OperationStatus migrate_user_config_0_1_2(
@@ -72,7 +79,7 @@ OperationStatus migrate_user_config_0_1_2(
     const char* keystore_path)
 {
     LOGOS_CMOCK_RECORD("migrate_user_config_0_1_2");
-    return LOGOS_CMOCK_RETURN(int, "migrate_user_config_0_1_2");
+    return make_status(LOGOS_CMOCK_RETURN(int, "migrate_user_config_0_1_2"));
 }
 
 OperationStatus participate(
@@ -82,7 +89,7 @@ OperationStatus participate(
     const char* external_address)
 {
     LOGOS_CMOCK_RECORD("participate");
-    return LOGOS_CMOCK_RETURN(int, "participate");
+    return make_status(LOGOS_CMOCK_RETURN(int, "participate"));
 }
 
 StringResult generate_key(
@@ -95,7 +102,7 @@ StringResult generate_key(
     StringResult result;
     const char* id = LOGOS_CMOCK_RETURN_STRING("generate_key");
     result.value = id ? strdup(id) : nullptr;
-    result.error = LOGOS_CMOCK_RETURN(int, "generate_key_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "generate_key_error"));
     return result;
 }
 
@@ -107,7 +114,7 @@ OperationStatus add_key(
     const char* key_title)
 {
     LOGOS_CMOCK_RECORD("add_key");
-    return LOGOS_CMOCK_RETURN(int, "add_key");
+    return make_status(LOGOS_CMOCK_RETURN(int, "add_key"));
 }
 
 OperationStatus remove_key(
@@ -116,7 +123,7 @@ OperationStatus remove_key(
     const char* key_title)
 {
     LOGOS_CMOCK_RECORD("remove_key");
-    return LOGOS_CMOCK_RETURN(int, "remove_key");
+    return make_status(LOGOS_CMOCK_RETURN(int, "remove_key"));
 }
 
 StringResult get_peer_id(const char* config_path) {
@@ -124,20 +131,20 @@ StringResult get_peer_id(const char* config_path) {
     StringResult result;
     const char* id = LOGOS_CMOCK_RETURN_STRING("get_peer_id");
     result.value = id ? strdup(id) : nullptr;
-    result.error = LOGOS_CMOCK_RETURN(int, "get_peer_id_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_peer_id_error"));
     return result;
 }
 
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback) {
     LOGOS_CMOCK_RECORD("subscribe_to_new_blocks");
-    return LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks");
+    return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks"));
 }
 
 BalanceResult get_balance(LogosBlockchainNode* node, const uint8_t* address, const void* reserved) {
     LOGOS_CMOCK_RECORD("get_balance");
     BalanceResult result;
     result.value = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "get_balance_value"));
-    result.error = LOGOS_CMOCK_RETURN(int, "get_balance_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_balance_error"));
     return result;
 }
 
@@ -145,7 +152,7 @@ TransferHashResult transfer_funds(LogosBlockchainNode* node, const TransferFunds
     LOGOS_CMOCK_RECORD("transfer_funds");
     TransferHashResult result;
     memset(result.value, 0xAB, sizeof(Hash));
-    result.error = LOGOS_CMOCK_RETURN(int, "transfer_funds_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "transfer_funds_error"));
     return result;
 }
 
@@ -153,7 +160,7 @@ FfiLeaderClaimResult leader_claim(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("leader_claim");
     FfiLeaderClaimResult result;
     memset(result.value, 0xEF, sizeof(TxHash));
-    result.error = LOGOS_CMOCK_RETURN(int, "leader_claim_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "leader_claim_error"));
     return result;
 }
 
@@ -161,7 +168,7 @@ KnownAddressesResult get_known_addresses(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("get_known_addresses");
     KnownAddressesResult result;
     int err = LOGOS_CMOCK_RETURN(int, "get_known_addresses_error");
-    result.error = err;
+    result.error = make_status(err);
     if (err == 0) {
         int count = LOGOS_CMOCK_RETURN(int, "get_known_addresses_count");
         if (count > 4) count = 4;
@@ -180,14 +187,14 @@ KnownAddressesResult get_known_addresses(LogosBlockchainNode* node) {
 
 OperationStatus free_known_addresses(KnownAddresses addrs) {
     LOGOS_CMOCK_RECORD("free_known_addresses");
-    return 0;
+    return make_status(0);
 }
 
 FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip) {
     LOGOS_CMOCK_RECORD("get_claimable_vouchers");
     FfiClaimableVouchersResult result;
     int err = LOGOS_CMOCK_RETURN(int, "get_claimable_vouchers_error");
-    result.error = err;
+    result.error = make_status(err);
     if (err == 0) {
         int count = LOGOS_CMOCK_RETURN(int, "get_claimable_vouchers_count");
         if (count > 4) count = 4;
@@ -208,7 +215,7 @@ FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, con
 
 OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers) {
     LOGOS_CMOCK_RECORD("free_claimable_vouchers");
-    return 0;
+    return make_status(0);
 }
 
 // Wallet-notes mock storage (up to 4 notes)
@@ -223,7 +230,7 @@ FfiWalletNotesResult get_wallet_notes(
     FfiWalletNotesResult result;
     memset(&result.value, 0, sizeof(WalletNotes));
     int err = LOGOS_CMOCK_RETURN(int, "get_wallet_notes_error");
-    result.error = err;
+    result.error = make_status(err);
     if (err == 0) {
         int count = LOGOS_CMOCK_RETURN(int, "get_wallet_notes_count");
         if (count > 4) count = 4;
@@ -241,14 +248,14 @@ FfiWalletNotesResult get_wallet_notes(
 
 OperationStatus free_wallet_notes(WalletNotes notes) {
     LOGOS_CMOCK_RECORD("free_wallet_notes");
-    return 0;
+    return make_status(0);
 }
 
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments) {
     LOGOS_CMOCK_RECORD("channel_deposit");
     FfiChannelDepositResult result;
     memset(result.value, 0xBC, sizeof(Hash));
-    result.error = LOGOS_CMOCK_RETURN(int, "channel_deposit_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "channel_deposit_error"));
     return result;
 }
 
@@ -259,7 +266,7 @@ FfiChannelDepositResult channel_deposit_with_notes(
     LOGOS_CMOCK_RECORD("channel_deposit_with_notes");
     FfiChannelDepositResult result;
     memset(result.value, 0xDE, sizeof(Hash));
-    result.error = LOGOS_CMOCK_RETURN(int, "channel_deposit_with_notes_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "channel_deposit_with_notes_error"));
     return result;
 }
 
@@ -274,7 +281,7 @@ BlendHashResult blend_join_as_core_node(
     LOGOS_CMOCK_RECORD("blend_join_as_core_node");
     BlendHashResult result;
     memset(result.value, 0xCD, sizeof(Hash));
-    result.error = LOGOS_CMOCK_RETURN(int, "blend_join_as_core_node_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_join_as_core_node_error"));
     return result;
 }
 
@@ -283,7 +290,7 @@ StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id) {
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_block");
     result.value = json ? strdup(json) : nullptr;
-    result.error = LOGOS_CMOCK_RETURN(int, "get_block_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_block_error"));
     return result;
 }
 
@@ -292,7 +299,7 @@ StringResult get_blocks(LogosBlockchainNode* node, uint64_t from_slot, uint64_t 
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_blocks");
     result.value = json ? strdup(json) : nullptr;
-    result.error = LOGOS_CMOCK_RETURN(int, "get_blocks_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_blocks_error"));
     return result;
 }
 
@@ -301,7 +308,7 @@ StringResult get_transaction(LogosBlockchainNode* node, const TxHash* tx_hash) {
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_transaction");
     result.value = json ? strdup(json) : nullptr;
-    result.error = LOGOS_CMOCK_RETURN(int, "get_transaction_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_transaction_error"));
     return result;
 }
 
@@ -315,19 +322,19 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     memset(s_fakeCryptarchiaInfo.lib, 0xEE, 32);
     memset(s_fakeCryptarchiaInfo.tip, 0xFF, 32);
     result.value = &s_fakeCryptarchiaInfo;
-    result.error = LOGOS_CMOCK_RETURN(int, "get_cryptarchia_info_error");
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_cryptarchia_info_error"));
     return result;
 }
 
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info) {
     LOGOS_CMOCK_RECORD("free_cryptarchia_info");
-    return 0;
+    return make_status(0);
 }
 
 OperationStatus free_cstring(char* s) {
     LOGOS_CMOCK_RECORD("free_cstring");
     free(s);
-    return 0;
+    return make_status(0);
 }
 
 } // extern "C"

@@ -21,8 +21,28 @@ typedef Hash NoteId;
 // Opaque node handle
 typedef struct LogosBlockchainNode LogosBlockchainNode;
 
-// Operation status (0 = OK)
-typedef int OperationStatus;
+// Operation status code (0 = OK)
+typedef enum OperationStatusCode {
+    OperationStatusCode_Ok = 0,
+    OperationStatusCode_NotFound = 1,
+    OperationStatusCode_NullPointer = 2,
+    OperationStatusCode_RelayError = 3,
+    OperationStatusCode_ChannelSendError = 4,
+    OperationStatusCode_ChannelReceiveError = 5,
+    OperationStatusCode_ServiceError = 6,
+    OperationStatusCode_RuntimeError = 7,
+    OperationStatusCode_DynError = 8,
+    OperationStatusCode_InitializationError = 9,
+    OperationStatusCode_StopError = 10,
+    OperationStatusCode_ConfigurationError = 11,
+    OperationStatusCode_ValidationError = 12,
+} OperationStatusCode;
+
+// Operation status: code + Rust-allocated error message (free with free_cstring).
+typedef struct {
+    OperationStatusCode code;
+    char* message;
+} OperationStatus;
 
 // Consensus state enum
 typedef enum { Bootstrapping, Online } State;
