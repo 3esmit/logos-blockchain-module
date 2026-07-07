@@ -216,7 +216,7 @@ LOGOS_TEST(generate_user_config_with_all_fields) {
         "http_addr": "0.0.0.0:8080",
         "external_address": "1.2.3.4",
         "state_path": "/tmp/state",
-        "ibd": true,
+        "skip_ibd": true,
         "log_filter": "warn,logos_blockchain=debug",
         "kms_file": "/tmp/kms.yaml"
     })";
