@@ -144,7 +144,7 @@ namespace {
         std::string state_path_data;
         std::string storage_path_data;
         std::string logs_path_data;
-        bool ibd_val;
+        bool skip_ibd_val;
         std::string log_filter_data;
         std::string kms_file_data;
 
@@ -235,12 +235,12 @@ namespace {
                 ffi_args.logs_path = nullptr;
             }
 
-            // ibd (bool -> const bool*)
-            if (args.contains("ibd") && args["ibd"].is_boolean()) {
-                ibd_val = args["ibd"].get<bool>();
-                ffi_args.ibd = &ibd_val;
+            // skip_ibd (bool -> const bool*)
+            if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
+                skip_ibd_val = args["skip_ibd"].get<bool>();
+                ffi_args.skip_ibd = &skip_ibd_val;
             } else {
-                ffi_args.ibd = nullptr;
+                ffi_args.skip_ibd = nullptr;
             }
 
             // log_filter (string -> const char*)
@@ -425,7 +425,7 @@ StdLogosResult LogosBlockchainModule::stop() {
 
     s_instance = nullptr;
 
-    OperationStatus status = stop_node(node);
+    OperationStatus status = shutdown_node(node);
     if (!is_ok(&status)) {
         fprintf(stderr, "Could not stop the node: %s\n", operation_status::take_message(status).c_str());
     }
@@ -939,23 +939,15 @@ StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
 // Blend
 
 StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
-    const std::string& provider_id_hex,
-    const std::string& zk_id_hex,
-    const std::string& locked_note_id_hex,
-    const std::vector<std::string>& locators
+    const std::string& locator,
+    const std::string& locked_note_id_hex
 ) const {
     if (!node) {
         return result::err("The node is not running.");
     }
 
-    const std::vector<uint8_t> provider_id_bytes = parse_address_hex(provider_id_hex);
-    if (provider_id_bytes.empty() || static_cast<int>(provider_id_bytes.size()) != ADDRESS_BYTES) {
-        return result::err("Invalid provider_id_hex (64 hex characters required).");
-    }
-
-    const std::vector<uint8_t> zk_id_bytes = parse_address_hex(zk_id_hex);
-    if (zk_id_bytes.empty() || static_cast<int>(zk_id_bytes.size()) != ADDRESS_BYTES) {
-        return result::err("Invalid zk_id_hex (64 hex characters required).");
+    if (locator.empty()) {
+        return result::err("Invalid locator (must not be empty).");
     }
 
     const std::vector<uint8_t> locked_note_id_bytes = parse_address_hex(locked_note_id_hex);
@@ -963,20 +955,10 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    // locators_ptrs holds raw pointers into the std::strings (valid as long as `locators` lives).
-    std::vector<const char*> locators_ptrs;
-    locators_ptrs.reserve(locators.size());
-    for (const std::string& locator : locators) {
-        locators_ptrs.push_back(locator.c_str());
-    }
-
     auto [value, error] = ::blend_join_as_core_node(
         node,
-        provider_id_bytes.data(),
-        zk_id_bytes.data(),
-        locked_note_id_bytes.data(),
-        locators_ptrs.data(),
-        locators_ptrs.size()
+        locator.c_str(),
+        locked_note_id_bytes.data()
     );
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));

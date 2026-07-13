@@ -58,8 +58,8 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
     return result;
 }
 
-OperationStatus stop_node(LogosBlockchainNode* node) {
-    LOGOS_CMOCK_RECORD("stop_node");
+OperationStatus shutdown_node(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("shutdown_node");
     return make_status(0);
 }
 
@@ -272,11 +272,8 @@ FfiChannelDepositResult channel_deposit_with_notes(
 
 BlendHashResult blend_join_as_core_node(
     LogosBlockchainNode* node,
-    const uint8_t* provider_id,
-    const uint8_t* zk_id,
-    const uint8_t* locked_note_id,
-    const char** locators,
-    size_t locators_count)
+    const char* locator,
+    const uint8_t* locked_note_id)
 {
     LOGOS_CMOCK_RECORD("blend_join_as_core_node");
     BlendHashResult result;

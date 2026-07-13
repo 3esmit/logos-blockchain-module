@@ -292,7 +292,7 @@ LOGOS_TEST(wallet_get_known_addresses_without_node_returns_error) {
 LOGOS_TEST(blend_join_as_core_node_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
-    StdLogosResult result = module.blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"});
+    StdLogosResult result = module.blend_join_as_core_node("locator1", VALID_HEX);
     LOGOS_ASSERT_FALSE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
 }
@@ -354,7 +354,7 @@ LOGOS_TEST(stop_succeeds_with_running_node) {
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     LOGOS_ASSERT_TRUE(module->stop().success);
-    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("shutdown_node"));
     delete module;
 }
 
@@ -475,27 +475,15 @@ LOGOS_TEST(wallet_transfer_funds_rejects_invalid_optional_tip) {
 
 // blend_join_as_core_node validation
 
-LOGOS_TEST(blend_join_rejects_invalid_provider_id) {
+LOGOS_TEST(blend_join_rejects_empty_locator) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
-    StdLogosResult result = module->blend_join_as_core_node("short", VALID_HEX, VALID_HEX, {});
+    StdLogosResult result = module->blend_join_as_core_node("", VALID_HEX);
     LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "provider_id"));
-    delete module;
-}
-
-LOGOS_TEST(blend_join_rejects_invalid_zk_id) {
-    auto t = LogosTestContext("blockchain_module");
-    TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
-    LOGOS_ASSERT_TRUE(module != nullptr);
-
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, "short", VALID_HEX, {});
-    LOGOS_ASSERT_FALSE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.error, "zk_id"));
+    LOGOS_ASSERT_TRUE(contains(result.error, "locator"));
     delete module;
 }
 
@@ -505,7 +493,7 @@ LOGOS_TEST(blend_join_rejects_invalid_locked_note_id) {
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, "short", {});
+    StdLogosResult result = module->blend_join_as_core_node("locator1", "short");
     LOGOS_ASSERT_FALSE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.error, "locked_note_id"));
     delete module;
@@ -1035,8 +1023,7 @@ LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
 
     t.mockCFunction("blend_join_as_core_node_error").returns(0);
 
-    std::vector<std::string> locators = {"locator1", "locator2"};
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, locators);
+    StdLogosResult result = module->blend_join_as_core_node("locator1", VALID_HEX);
     LOGOS_ASSERT_TRUE(result.success);
     // Mock fills hash with 0xCD -> hex "cdcd...cd" (64 chars)
     std::string declarationId = result.value.get<std::string>();
@@ -1054,7 +1041,7 @@ LOGOS_TEST(blend_join_as_core_node_returns_error_on_ffi_failure) {
 
     t.mockCFunction("blend_join_as_core_node_error").returns(1);
 
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {});
+    StdLogosResult result = module->blend_join_as_core_node("locator1", VALID_HEX);
     LOGOS_ASSERT_FALSE(result.success);
     delete module;
 }

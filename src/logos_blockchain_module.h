@@ -130,10 +130,8 @@ public:
 
     // Blend
     [[nodiscard]] StdLogosResult blend_join_as_core_node(
-        const std::string& provider_id_hex,
-        const std::string& zk_id_hex,
-        const std::string& locked_note_id_hex,
-        const std::vector<std::string>& locators
+        const std::string& locator,
+        const std::string& locked_note_id_hex
     ) const;
 
     // Explorer
