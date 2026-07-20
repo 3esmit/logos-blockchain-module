@@ -4,6 +4,7 @@
 #include <logos_test.h>
 #include "logos_blockchain_module.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -20,6 +21,12 @@ static const std::string VALID_HEX_WITH_PREFIX = "0x" + std::string(64, 'b');
 
 static bool contains(const std::string& s, const std::string& sub) {
     return s.find(sub) != std::string::npos;
+}
+
+static std::string test_hex_id(const size_t value) {
+    char id[65] = {};
+    std::snprintf(id, sizeof(id), "%064zx", value);
+    return id;
 }
 
 // RAII wrapper for a temporary directory (removed on destruction).
@@ -1211,6 +1218,35 @@ LOGOS_TEST(get_blocks_rejects_a_repeated_live_parent) {
     delete module;
 }
 
+LOGOS_TEST(get_blocks_rejects_a_truncated_live_parent_walk) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_blocks").returns("[]");
+    t.mockCFunction("get_blocks_error").returns(0);
+    t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_slot").returns(500);
+    t.mockCFunction("get_block_error").returns(0);
+
+    std::vector<std::string> responses;
+    responses.reserve(500);
+    for (size_t index = 0; index < 500; ++index) {
+        responses.push_back(
+            R"({"header":{"slot":500,"parent_block":")" + test_hex_id(index + 1) +
+            R"("},"transactions":[]})"
+        );
+    }
+    ScopedMockGetBlockResponses scoped_responses(std::move(responses));
+
+    StdLogosResult result = module->get_blocks(1, 500);
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "traversal limit"));
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("get_block"), 500);
+    delete module;
+}
+
 LOGOS_TEST(get_transaction_returns_json_on_success) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
@@ -1222,7 +1258,9 @@ LOGOS_TEST(get_transaction_returns_json_on_success) {
 
     StdLogosResult result = module->get_transaction(VALID_HEX);
     LOGOS_ASSERT_TRUE(result.success);
-    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "confirmed"));
+    const json transaction = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(transaction["status"].get<std::string>(), std::string("confirmed"));
+    LOGOS_ASSERT_EQ(transaction["hash"].get<std::string>(), VALID_HEX);
     LOGOS_ASSERT(t.cFunctionCalled("get_transaction"));
     LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
     delete module;
@@ -1353,6 +1391,22 @@ LOGOS_TEST(new_block_event_emits_an_object_envelope_with_transaction_hashes) {
         emitted["block"]["transactions"][0]["mantle_tx"]["hash"].get<std::string>(),
         transaction_id
     );
+    delete module;
+}
+
+LOGOS_TEST(new_block_event_preserves_a_malformed_payload_as_a_string) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    g_lastNewBlockJson.clear();
+    const std::string malformed_payload = "{not-json";
+    trigger_mock_new_block(malformed_payload.c_str());
+
+    const json emitted = json::parse(g_lastNewBlockJson);
+    LOGOS_ASSERT_TRUE(emitted["block"].is_string());
+    LOGOS_ASSERT_EQ(emitted["block"].get<std::string>(), malformed_payload);
     delete module;
 }
 

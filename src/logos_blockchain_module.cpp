@@ -1258,6 +1258,7 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
 
     std::unordered_set<std::string> visited;
     std::vector<json> reverse_blocks;
+    bool reached_lower_bound = false;
     std::string current_id = tip_id;
     for (size_t walked = 0; walked < MAX_TIP_PARENT_WALK_BLOCKS; ++walked) {
         if (!visited.insert(current_id).second) {
@@ -1287,20 +1288,28 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
             return result::err("get_blocks received a live block without a valid header slot.");
         }
         if (slot < from_slot) {
+            reached_lower_bound = true;
             break;
         }
-        const bool reached_lower_bound = slot <= from_slot || slot == 0;
         std::string parent_id;
-        if (!reached_lower_bound && !parent_block_id(block, parent_id)) {
+        const bool needs_parent = slot > from_slot;
+        if (needs_parent && !parent_block_id(block, parent_id)) {
             return result::err("get_blocks received a live block without a valid parent block id.");
         }
         if (slot <= to_slot) {
             reverse_blocks.push_back(std::move(block));
         }
-        if (reached_lower_bound) {
+        if (!needs_parent) {
+            reached_lower_bound = true;
             break;
         }
         current_id = std::move(parent_id);
+    }
+
+    if (!reached_lower_bound) {
+        return result::err(
+            "get_blocks reached the live-tip traversal limit before the requested lower slot."
+        );
     }
 
     std::reverse(reverse_blocks.begin(), reverse_blocks.end());
