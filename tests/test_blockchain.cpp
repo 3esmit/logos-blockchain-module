@@ -6,11 +6,13 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 // 64-char hex string = 32 bytes (valid address/hash)
 static const std::string VALID_HEX(64, 'a');
@@ -91,6 +93,20 @@ extern std::string g_lastGeneratedOutput;
 extern std::string g_lastGeneratedStatePath;
 extern std::string g_lastGeneratedStoragePath;
 extern std::string g_lastGeneratedLogsPath;
+extern std::string g_lastNewBlockJson;
+extern void set_mock_get_block_responses(std::vector<std::string> responses);
+extern void clear_mock_get_block_responses();
+extern void trigger_mock_new_block(const char* block_json);
+
+struct ScopedMockGetBlockResponses {
+    explicit ScopedMockGetBlockResponses(std::vector<std::string> responses) {
+        set_mock_get_block_responses(std::move(responses));
+    }
+
+    ~ScopedMockGetBlockResponses() {
+        clear_mock_get_block_responses();
+    }
+};
 
 static void clearGeneratedPaths() {
     g_lastGeneratedOutput.clear();
@@ -1080,6 +1096,27 @@ LOGOS_TEST(get_block_returns_json_on_success) {
     delete module;
 }
 
+LOGOS_TEST(get_block_adds_requested_canonical_header_id) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_block").returns(
+        R"({"header":{"slot":42,"parent_block":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transactions":[]})"
+    );
+    t.mockCFunction("get_block_error").returns(0);
+
+    const std::string requested = "0x" + std::string(64, 'B');
+    StdLogosResult result = module->get_block(requested);
+    LOGOS_ASSERT_TRUE(result.success);
+
+    const json block = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(block["header"]["id"].get<std::string>(), std::string(64, 'b'));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
 LOGOS_TEST(get_block_returns_error_on_ffi_failure) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
@@ -1121,19 +1158,103 @@ LOGOS_TEST(get_blocks_returns_error_on_ffi_failure) {
     delete module;
 }
 
+LOGOS_TEST(get_blocks_rejects_reversed_range_before_ffi) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    StdLogosResult result = module->get_blocks(130, 100);
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "from_slot"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("get_blocks"));
+    delete module;
+}
+
+LOGOS_TEST(get_blocks_walks_live_tip_when_immutable_range_is_empty) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_blocks").returns("[]");
+    t.mockCFunction("get_blocks_error").returns(0);
+    t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_slot").returns(130);
+    t.mockCFunction("get_block_error").returns(0);
+    ScopedMockGetBlockResponses responses({
+        R"({"header":{"slot":130,"parent_block":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"transactions":[]})",
+        R"({"header":{"slot":115,"parent_block":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"transactions":[]})",
+        R"({"header":{"slot":90,"parent_block":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"transactions":[]})",
+    });
+
+    StdLogosResult result = module->get_blocks(100, 130);
+    LOGOS_ASSERT_TRUE(result.success);
+    const json blocks = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(blocks.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(blocks[0]["header"]["slot"].get<uint64_t>(), static_cast<uint64_t>(115));
+    LOGOS_ASSERT_EQ(blocks[0]["header"]["id"].get<std::string>(), std::string(64, 'b'));
+    LOGOS_ASSERT_EQ(blocks[1]["header"]["slot"].get<uint64_t>(), static_cast<uint64_t>(130));
+    LOGOS_ASSERT_EQ(blocks[1]["header"]["id"].get<std::string>(), std::string(64, 'f'));
+    LOGOS_ASSERT(t.cFunctionCalled("get_cryptarchia_info"));
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("get_block"), 3);
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("free_cstring"), 4);
+    LOGOS_ASSERT(t.cFunctionCalled("free_cryptarchia_info"));
+    delete module;
+}
+
+LOGOS_TEST(get_blocks_rejects_a_repeated_live_parent) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_blocks").returns("[]");
+    t.mockCFunction("get_blocks_error").returns(0);
+    t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_slot").returns(130);
+    t.mockCFunction("get_block_error").returns(0);
+    ScopedMockGetBlockResponses responses({
+        R"({"header":{"slot":130,"parent_block":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},"transactions":[]})",
+    });
+
+    StdLogosResult result = module->get_blocks(100, 130);
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "repeated parent"));
+    delete module;
+}
+
 LOGOS_TEST(get_transaction_returns_json_on_success) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
-    t.mockCFunction("get_transaction").returns(R"({"hash":"abc","status":"confirmed"})");
+    t.mockCFunction("get_transaction").returns(R"({"status":"confirmed"})");
     t.mockCFunction("get_transaction_error").returns(0);
 
     StdLogosResult result = module->get_transaction(VALID_HEX);
     LOGOS_ASSERT_TRUE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "confirmed"));
     LOGOS_ASSERT(t.cFunctionCalled("get_transaction"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
+LOGOS_TEST(get_transaction_adds_requested_canonical_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_transaction").returns(R"({"mantle_tx":{"ops":[]},"ops_proofs":[]})");
+    t.mockCFunction("get_transaction_error").returns(0);
+
+    const std::string requested = "0x" + std::string(64, 'C');
+    StdLogosResult result = module->get_transaction(requested);
+    LOGOS_ASSERT_TRUE(result.success);
+    const json transaction = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(transaction["mantle_tx"]["hash"].get<std::string>(), std::string(64, 'c'));
     LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
     delete module;
 }
@@ -1162,19 +1283,21 @@ LOGOS_TEST(get_cryptarchia_info_returns_json_on_success) {
     t.mockCFunction("cryptarchia_slot").returns(100);
     t.mockCFunction("cryptarchia_height").returns(50);
     t.mockCFunction("cryptarchia_mode").returns(1); // Online
+    t.mockCFunction("get_block_error").returns(0);
+    ScopedMockGetBlockResponses responses({R"({"header":{"slot":99},"transactions":[]})"});
 
     StdLogosResult result = module->get_cryptarchia_info();
     LOGOS_ASSERT_TRUE(result.success);
-    std::string json = result.value.get<std::string>();
-    LOGOS_ASSERT_TRUE(contains(json, "slot"));
-    LOGOS_ASSERT_TRUE(contains(json, "100"));
-    LOGOS_ASSERT_TRUE(contains(json, "height"));
-    LOGOS_ASSERT_TRUE(contains(json, "50"));
-    LOGOS_ASSERT_TRUE(contains(json, "Online"));
-    LOGOS_ASSERT_TRUE(contains(json, "lib"));
-    LOGOS_ASSERT_TRUE(contains(json, "tip"));
+    const json info = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(info["slot"].get<uint64_t>(), static_cast<uint64_t>(100));
+    LOGOS_ASSERT_EQ(info["height"].get<uint64_t>(), static_cast<uint64_t>(50));
+    LOGOS_ASSERT_EQ(info["mode"].get<std::string>(), std::string("Online"));
+    LOGOS_ASSERT_TRUE(info.contains("lib"));
+    LOGOS_ASSERT_TRUE(info.contains("tip"));
+    LOGOS_ASSERT_EQ(info["lib_slot"].get<uint64_t>(), static_cast<uint64_t>(99));
     LOGOS_ASSERT(t.cFunctionCalled("get_cryptarchia_info"));
     LOGOS_ASSERT(t.cFunctionCalled("free_cryptarchia_info"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
     delete module;
 }
 
@@ -1186,9 +1309,29 @@ LOGOS_TEST(get_cryptarchia_info_bootstrapping_mode) {
 
     t.mockCFunction("get_cryptarchia_info_error").returns(0);
     t.mockCFunction("cryptarchia_mode").returns(0); // Bootstrapping
+    t.mockCFunction("get_block_error").returns(0);
+    ScopedMockGetBlockResponses responses({R"({"header":{"slot":0},"transactions":[]})"});
 
     StdLogosResult result = module->get_cryptarchia_info();
     LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "Bootstrapping"));
+    delete module;
+}
+
+LOGOS_TEST(get_cryptarchia_info_preserves_not_started_mode) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_mode").returns(2); // NotStarted
+    t.mockCFunction("get_block_error").returns(0);
+    ScopedMockGetBlockResponses responses({R"({"header":{"slot":0},"transactions":[]})"});
+
+    StdLogosResult result = module->get_cryptarchia_info();
+    LOGOS_ASSERT_TRUE(result.success);
+    const json info = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(info["mode"].get<std::string>(), std::string("NotStarted"));
     delete module;
 }
 
@@ -1201,6 +1344,28 @@ LOGOS_TEST(get_cryptarchia_info_returns_error_on_ffi_failure) {
     t.mockCFunction("get_cryptarchia_info_error").returns(1);
 
     LOGOS_ASSERT_FALSE(module->get_cryptarchia_info().success);
+    delete module;
+}
+
+LOGOS_TEST(new_block_event_emits_an_object_envelope_with_transaction_hashes) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    g_lastNewBlockJson.clear();
+    const std::string transaction_id(64, 'd');
+    const std::string event =
+        R"({"header":{"slot":130},"transactions":[{"id":")" + transaction_id +
+        R"(","mantle_tx":{"ops":[]}}]})";
+    trigger_mock_new_block(event.c_str());
+
+    const json emitted = json::parse(g_lastNewBlockJson);
+    LOGOS_ASSERT_TRUE(emitted["block"].is_object());
+    LOGOS_ASSERT_EQ(
+        emitted["block"]["transactions"][0]["mantle_tx"]["hash"].get<std::string>(),
+        transaction_id
+    );
     delete module;
 }
 

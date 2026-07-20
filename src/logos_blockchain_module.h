@@ -136,7 +136,10 @@ public:
         const std::vector<std::string>& locators
     ) const;
 
-    // Explorer
+    // Explorer. Direct reads normalize known request identities into the
+    // response: block.header.id and transaction.mantle_tx.hash. get_blocks
+    // uses a bounded tip-parent walk when the C API's immutable-only range
+    // read is empty near the live tip.
     [[nodiscard]] StdLogosResult get_block(const std::string& header_id_hex) const;
     [[nodiscard]] StdLogosResult get_blocks(uint64_t from_slot, uint64_t to_slot) const;
     [[nodiscard]] StdLogosResult get_transaction(const std::string& tx_hash_hex) const;
@@ -149,7 +152,8 @@ public:
 // Guard kept until https://github.com/llvm/llvm-project/issues/64763 lands.
 logos_events:
     // Fired by on_new_block_callback when the Rust node delivers a new block.
-    // blockJson is the full block serialized as JSON.
+    // blockJson is a JSON envelope: {"block": <block object>}. Transaction
+    // IDs carried by the core event are copied into mantle_tx.hash when absent.
     // ReSharper disable once CppFunctionIsNotImplemented
     void newBlock(const std::string& blockJson);
     // clang-format on
