@@ -169,63 +169,9 @@ namespace {
         return true;
     }
 
-    StdLogosResult normalize_block_json(const std::string& raw, const std::string& requested_id) {
-        json block;
-        try {
-            block = json::parse(raw);
-        } catch (const json::parse_error&) {
-            return result::ok(raw);
-        }
-
-        if (!block.is_object()) {
-            return result::ok(raw);
-        }
-        auto header = block.find("header");
-        if (header == block.end() || !header->is_object()) {
-            return result::ok(raw);
-        }
-
-        std::string error;
-        json& header_object = *header;
-        if (header_object.contains("id")) {
-            if (!canonicalize_hash_field(header_object, "id", requested_id, "get_block", error)) {
-                return result::err(std::move(error));
-            }
-        } else if (header_object.contains("hash")) {
-            if (!canonicalize_hash_field(header_object, "hash", requested_id, "get_block", error)) {
-                return result::err(std::move(error));
-            }
-        }
-        header_object["id"] = requested_id;
-        return result::ok(block.dump());
-    }
-
-    StdLogosResult normalize_transaction_json(const std::string& raw, const std::string& requested_id) {
-        json transaction;
-        try {
-            transaction = json::parse(raw);
-        } catch (const json::parse_error&) {
-            return result::ok(raw);
-        }
-
-        if (!transaction.is_object()) {
-            return result::ok(raw);
-        }
-
-        json* transaction_object = &transaction;
-        if (auto mantle_transaction = transaction.find("mantle_tx");
-            mantle_transaction != transaction.end() && mantle_transaction->is_object()) {
-            transaction_object = &*mantle_transaction;
-        }
-
-        std::string error;
-        if (!canonicalize_hash_field(*transaction_object, "hash", requested_id, "get_transaction", error)) {
-            return result::err(std::move(error));
-        }
-        return result::ok(transaction.dump());
-    }
-
-    void normalize_event_transaction_hashes(json& block) {
+    // Core block serializers expose canonical transaction identity as the
+    // envelope `id`; keep the module's established `mantle_tx.hash` shape.
+    void normalize_block_transaction_hashes(json& block) {
         if (!block.is_object()) {
             return;
         }
@@ -257,6 +203,63 @@ namespace {
                                                   ? id->get<std::string>()
                                                   : bytes_to_hex(hash_bytes.data(), hash_bytes.size());
         }
+    }
+
+    StdLogosResult normalize_block_json(const std::string& raw, const std::string& requested_id) {
+        json block;
+        try {
+            block = json::parse(raw);
+        } catch (const json::parse_error&) {
+            return result::ok(raw);
+        }
+
+        if (!block.is_object()) {
+            return result::ok(raw);
+        }
+        auto header = block.find("header");
+        if (header == block.end() || !header->is_object()) {
+            return result::ok(raw);
+        }
+
+        std::string error;
+        json& header_object = *header;
+        if (header_object.contains("id")) {
+            if (!canonicalize_hash_field(header_object, "id", requested_id, "get_block", error)) {
+                return result::err(std::move(error));
+            }
+        } else if (header_object.contains("hash")) {
+            if (!canonicalize_hash_field(header_object, "hash", requested_id, "get_block", error)) {
+                return result::err(std::move(error));
+            }
+        }
+        header_object["id"] = requested_id;
+        normalize_block_transaction_hashes(block);
+        return result::ok(block.dump());
+    }
+
+    StdLogosResult normalize_transaction_json(const std::string& raw, const std::string& requested_id) {
+        json transaction;
+        try {
+            transaction = json::parse(raw);
+        } catch (const json::parse_error&) {
+            return result::ok(raw);
+        }
+
+        if (!transaction.is_object()) {
+            return result::ok(raw);
+        }
+
+        json* transaction_object = &transaction;
+        if (auto mantle_transaction = transaction.find("mantle_tx");
+            mantle_transaction != transaction.end() && mantle_transaction->is_object()) {
+            transaction_object = &*mantle_transaction;
+        }
+
+        std::string error;
+        if (!canonicalize_hash_field(*transaction_object, "hash", requested_id, "get_transaction", error)) {
+            return result::err(std::move(error));
+        }
+        return result::ok(transaction.dump());
     }
 
     bool block_slot(const json& block, uint64_t& slot) {
@@ -464,7 +467,7 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
     // callback, which runs on the core runtime.
     try {
         json parsed_block = json::parse(block);
-        normalize_event_transaction_hashes(parsed_block);
+        normalize_block_transaction_hashes(parsed_block);
 
         json event;
         event["block"] = std::move(parsed_block);
@@ -1223,8 +1226,14 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     } catch (const json::parse_error&) {
         return raw;
     }
-    if (!immutable_blocks.is_array() || !immutable_blocks.empty()) {
+    if (!immutable_blocks.is_array()) {
         return raw;
+    }
+    if (!immutable_blocks.empty()) {
+        for (json& block : immutable_blocks) {
+            normalize_block_transaction_hashes(block);
+        }
+        return result::ok(immutable_blocks.dump());
     }
 
     // The existing C API's range query reads immutable blocks only. For a
