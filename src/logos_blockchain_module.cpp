@@ -1191,7 +1191,7 @@ StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex
         return result::err(operation_status::take_message(error));
     }
 
-    StdLogosResult raw = copy_cstring_result(value, "block");
+    StdLogosResult raw = copy_cstring_result(value, "get_block");
     if (!raw.success) {
         return raw;
     }
@@ -1211,7 +1211,7 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
         return result::err(operation_status::take_message(error));
     }
 
-    StdLogosResult raw = copy_cstring_result(value, "blocks");
+    StdLogosResult raw = copy_cstring_result(value, "get_blocks");
     if (!raw.success) {
         return raw;
     }
@@ -1331,7 +1331,7 @@ StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash
         return result::err(operation_status::take_message(error));
     }
 
-    StdLogosResult raw = copy_cstring_result(value, "transaction");
+    StdLogosResult raw = copy_cstring_result(value, "get_transaction");
     if (!raw.success) {
         return raw;
     }
