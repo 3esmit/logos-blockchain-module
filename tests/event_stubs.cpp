@@ -12,6 +12,11 @@
 
 #include "logos_blockchain_module.h"
 
+#include <string>
+
+std::string g_lastNewBlockJson;
+
 void LogosBlockchainModule::newBlock(const std::string& blockJson) {
+    g_lastNewBlockJson = blockJson;
     emitEventImpl_("newBlock", nullptr);
 }
