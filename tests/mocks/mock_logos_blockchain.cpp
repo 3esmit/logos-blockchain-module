@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 // Captures the paths passed to the most recent generate_user_config call so tests
 // can assert the module's path routing. A null pointer is recorded as the
@@ -18,6 +19,25 @@ std::string g_lastGeneratedLogsPath;
 
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
+static BlockCallback s_blockCallback = nullptr;
+static std::vector<std::string> s_mockGetBlockResponses;
+static size_t s_nextMockGetBlockResponse = 0;
+
+void set_mock_get_block_responses(std::vector<std::string> responses) {
+    s_mockGetBlockResponses = std::move(responses);
+    s_nextMockGetBlockResponse = 0;
+}
+
+void clear_mock_get_block_responses() {
+    s_mockGetBlockResponses.clear();
+    s_nextMockGetBlockResponse = 0;
+}
+
+void trigger_mock_new_block(const char* block_json) {
+    if (s_blockCallback) {
+        s_blockCallback(block_json);
+    }
+}
 
 // Known-address mock storage (up to 4 addresses)
 static uint8_t s_mockAddr0[32];
@@ -60,6 +80,7 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
 
 OperationStatus stop_node(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("stop_node");
+    s_blockCallback = nullptr;
     return make_status(0);
 }
 
@@ -137,6 +158,7 @@ StringResult get_peer_id(const char* config_path) {
 
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback) {
     LOGOS_CMOCK_RECORD("subscribe_to_new_blocks");
+    s_blockCallback = callback;
     return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks"));
 }
 
@@ -288,7 +310,12 @@ BlendHashResult blend_join_as_core_node(
 StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id) {
     LOGOS_CMOCK_RECORD("get_block");
     StringResult result;
-    const char* json = LOGOS_CMOCK_RETURN_STRING("get_block");
+    const char* json = nullptr;
+    if (s_nextMockGetBlockResponse < s_mockGetBlockResponses.size()) {
+        json = s_mockGetBlockResponses[s_nextMockGetBlockResponse++].c_str();
+    } else {
+        json = LOGOS_CMOCK_RETURN_STRING("get_block");
+    }
     result.value = json ? strdup(json) : nullptr;
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_block_error"));
     return result;

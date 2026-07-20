@@ -45,7 +45,7 @@ typedef struct {
 } OperationStatus;
 
 // Consensus state enum
-typedef enum { Bootstrapping, Online } State;
+typedef enum { Bootstrapping, Online, NotStarted } State;
 
 // Key type for generate_key / add_key
 typedef enum { Ed25519, Zk } KeyType;

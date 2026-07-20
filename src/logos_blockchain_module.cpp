@@ -5,10 +5,12 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <cctype>
 #include <charconv>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -54,6 +56,8 @@ namespace result {
 } // namespace result
 
 namespace {
+    constexpr size_t MAX_TIP_PARENT_WALK_BLOCKS = 500;
+
     // Rust `File::open` / `deserialize_config_at_path` only accept real filesystem paths. QML often
     // passes `file:///...` URLs; strip to a local path when applicable.
     std::string localPathFromFileUrl(const std::string& s) {
@@ -111,6 +115,194 @@ namespace {
         out.reserve(len * 2);
         boost::algorithm::hex_lower(data, data + len, std::back_inserter(out));
         return out;
+    }
+
+    StdLogosResult copy_cstring_result(char* value, const char* label) {
+        if (!value) {
+            return result::err(std::string(label) + " returned an empty response.");
+        }
+
+        std::string out(value);
+        OperationStatus free_status = free_cstring(value);
+        if (!is_ok(&free_status)) {
+            fprintf(
+                stderr,
+                "Failed to free %s string: %s\n",
+                label,
+                operation_status::take_message(free_status).c_str()
+            );
+        }
+        return result::ok(std::move(out));
+    }
+
+    bool canonicalize_hash_field(
+        json& object,
+        const char* field,
+        const std::string& requested_id,
+        const char* label,
+        std::string& error
+    ) {
+        const auto existing = object.find(field);
+        if (existing == object.end() || existing->is_null() ||
+            (existing->is_string() && existing->get<std::string>().empty())) {
+            object[field] = requested_id;
+            return true;
+        }
+        if (!existing->is_string()) {
+            error = std::string(label) + " returned a non-string " + field + ".";
+            return false;
+        }
+
+        const std::vector<uint8_t> bytes = parse_address_hex(existing->get<std::string>());
+        if (bytes.empty()) {
+            error = std::string(label) + " returned an invalid " + field + ".";
+            return false;
+        }
+        const std::string actual_id = bytes_to_hex(bytes.data(), bytes.size());
+        if (actual_id != requested_id) {
+            error = std::string(label) + " returned " + field + " `" + actual_id +
+                    "` for requested id `" + requested_id + "`.";
+            return false;
+        }
+
+        object[field] = actual_id;
+        return true;
+    }
+
+    StdLogosResult normalize_block_json(const std::string& raw, const std::string& requested_id) {
+        json block;
+        try {
+            block = json::parse(raw);
+        } catch (const json::parse_error&) {
+            return result::ok(raw);
+        }
+
+        if (!block.is_object()) {
+            return result::ok(raw);
+        }
+        auto header = block.find("header");
+        if (header == block.end() || !header->is_object()) {
+            return result::ok(raw);
+        }
+
+        std::string error;
+        json& header_object = *header;
+        if (header_object.contains("id")) {
+            if (!canonicalize_hash_field(header_object, "id", requested_id, "get_block", error)) {
+                return result::err(std::move(error));
+            }
+        } else if (header_object.contains("hash")) {
+            if (!canonicalize_hash_field(header_object, "hash", requested_id, "get_block", error)) {
+                return result::err(std::move(error));
+            }
+        }
+        header_object["id"] = requested_id;
+        return result::ok(block.dump());
+    }
+
+    StdLogosResult normalize_transaction_json(const std::string& raw, const std::string& requested_id) {
+        json transaction;
+        try {
+            transaction = json::parse(raw);
+        } catch (const json::parse_error&) {
+            return result::ok(raw);
+        }
+
+        if (!transaction.is_object()) {
+            return result::ok(raw);
+        }
+
+        json* transaction_object = &transaction;
+        if (auto mantle_transaction = transaction.find("mantle_tx");
+            mantle_transaction != transaction.end() && mantle_transaction->is_object()) {
+            transaction_object = &*mantle_transaction;
+        }
+
+        std::string error;
+        if (!canonicalize_hash_field(*transaction_object, "hash", requested_id, "get_transaction", error)) {
+            return result::err(std::move(error));
+        }
+        return result::ok(transaction.dump());
+    }
+
+    void normalize_event_transaction_hashes(json& block) {
+        if (!block.is_object()) {
+            return;
+        }
+        auto transactions = block.find("transactions");
+        if (transactions == block.end() || !transactions->is_array()) {
+            return;
+        }
+
+        for (json& transaction : *transactions) {
+            if (!transaction.is_object()) {
+                continue;
+            }
+            const auto id = transaction.find("id");
+            auto mantle_transaction = transaction.find("mantle_tx");
+            if (id == transaction.end() || !id->is_string() || mantle_transaction == transaction.end() ||
+                !mantle_transaction->is_object()) {
+                continue;
+            }
+
+            const auto hash = mantle_transaction->find("hash");
+            const bool missing_hash = hash == mantle_transaction->end() || hash->is_null() ||
+                                      (hash->is_string() && hash->get<std::string>().empty());
+            if (!missing_hash) {
+                continue;
+            }
+
+            const std::vector<uint8_t> hash_bytes = parse_address_hex(id->get<std::string>());
+            (*mantle_transaction)["hash"] = hash_bytes.empty()
+                                                  ? id->get<std::string>()
+                                                  : bytes_to_hex(hash_bytes.data(), hash_bytes.size());
+        }
+    }
+
+    bool block_slot(const json& block, uint64_t& slot) {
+        if (!block.is_object()) {
+            return false;
+        }
+        const auto header = block.find("header");
+        if (header == block.end() || !header->is_object()) {
+            return false;
+        }
+        const auto value = header->find("slot");
+        if (value == header->end()) {
+            return false;
+        }
+        if (value->is_number_unsigned()) {
+            slot = value->get<uint64_t>();
+            return true;
+        }
+        if (value->is_number_integer()) {
+            const int64_t signed_slot = value->get<int64_t>();
+            if (signed_slot >= 0) {
+                slot = static_cast<uint64_t>(signed_slot);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool parent_block_id(const json& block, std::string& parent_id) {
+        if (!block.is_object()) {
+            return false;
+        }
+        const auto header = block.find("header");
+        if (header == block.end() || !header->is_object()) {
+            return false;
+        }
+        const auto parent = header->find("parent_block");
+        if (parent == header->end() || !parent->is_string()) {
+            return false;
+        }
+        const std::vector<uint8_t> bytes = parse_address_hex(parent->get<std::string>());
+        if (bytes.empty()) {
+            return false;
+        }
+        parent_id = bytes_to_hex(bytes.data(), bytes.size());
+        return true;
     }
 
     // Maps an `ed25519`/`zk` string (case-insensitive) to the C KeyType enum.
@@ -263,14 +455,27 @@ namespace {
 } // namespace
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
-    if (s_instance) {
-        fprintf(stderr, "Received new block: %s\n", block);
-        json j;
-        j["block"] = std::string(block);
-        s_instance->newBlock(j.dump());
-        // SAFETY:
-        // We are getting an owned pointer here which is freed after this callback is called, so there is no need to
-        // free the resource here as we are copying the data!
+    if (!s_instance || !block) {
+        return;
+    }
+
+    // The C API borrows this pointer for the duration of the callback. Copy the
+    // JSON synchronously and avoid calling back into the node from this stream
+    // callback, which runs on the core runtime.
+    try {
+        json parsed_block = json::parse(block);
+        normalize_event_transaction_hashes(parsed_block);
+
+        json event;
+        event["block"] = std::move(parsed_block);
+        s_instance->newBlock(event.dump());
+    } catch (const json::parse_error& error) {
+        // Keep the legacy fallback for an invalid payload, but never emit the
+        // full payload to stderr: a busy block stream must not stall on logs.
+        fprintf(stderr, "Failed to parse new block event JSON: %s\n", error.what());
+        json event;
+        event["block"] = std::string(block);
+        s_instance->newBlock(event.dump());
     }
 }
 
@@ -1004,17 +1209,19 @@ StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex
         return result::err(operation_status::take_message(error));
     }
 
-    std::string out(value);
-    OperationStatus free_status = free_cstring(value);
-    if (!is_ok(&free_status)) {
-        fprintf(stderr, "Failed to free block string: %s\n", operation_status::take_message(free_status).c_str());
+    StdLogosResult raw = copy_cstring_result(value, "get_block");
+    if (!raw.success) {
+        return raw;
     }
-    return result::ok(std::move(out));
+    return normalize_block_json(raw.value.get<std::string>(), bytes_to_hex(bytes.data(), bytes.size()));
 }
 
 StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const uint64_t to_slot) const {
     if (!node) {
         return result::err("The node is not running.");
+    }
+    if (from_slot > to_slot) {
+        return result::err("from_slot must not be greater than to_slot.");
     }
 
     auto [value, error] = ::get_blocks(node, from_slot, to_slot);
@@ -1022,12 +1229,109 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
         return result::err(operation_status::take_message(error));
     }
 
-    std::string out(value);
-    OperationStatus free_status = free_cstring(value);
-    if (!is_ok(&free_status)) {
-        fprintf(stderr, "Failed to free blocks string: %s\n", operation_status::take_message(free_status).c_str());
+    StdLogosResult raw = copy_cstring_result(value, "get_blocks");
+    if (!raw.success) {
+        return raw;
     }
-    return result::ok(std::move(out));
+
+    const std::string raw_json = raw.value.get<std::string>();
+    json immutable_blocks;
+    try {
+        immutable_blocks = json::parse(raw_json);
+    } catch (const json::parse_error&) {
+        return raw;
+    }
+    if (!immutable_blocks.is_array() || !immutable_blocks.empty()) {
+        return raw;
+    }
+
+    // The existing C API's range query reads immutable blocks only. For a
+    // bounded range near the live tip, fill the expected explorer data through
+    // the already available individual-block read and parent links.
+    auto [info, info_error] = ::get_cryptarchia_info(node);
+    if (!is_ok(&info_error)) {
+        return result::err(
+            "get_blocks returned no blocks and could not read the current tip: " +
+            operation_status::take_message(info_error)
+        );
+    }
+    if (!info) {
+        return result::err("get_blocks returned no blocks and cryptarchia info was empty.");
+    }
+
+    const uint64_t tip_slot = info->slot;
+    const std::string tip_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(info->tip), ADDRESS_BYTES);
+    OperationStatus free_info_status = free_cryptarchia_info(info);
+    if (!is_ok(&free_info_status)) {
+        fprintf(
+            stderr,
+            "Failed to free cryptarchia info after block range read: %s\n",
+            operation_status::take_message(free_info_status).c_str()
+        );
+    }
+
+    if (tip_slot < from_slot || tip_slot - from_slot >= MAX_TIP_PARENT_WALK_BLOCKS) {
+        return raw;
+    }
+
+    std::unordered_set<std::string> visited;
+    std::vector<json> reverse_blocks;
+    bool reached_lower_bound = false;
+    std::string current_id = tip_id;
+    for (size_t walked = 0; walked < MAX_TIP_PARENT_WALK_BLOCKS; ++walked) {
+        if (!visited.insert(current_id).second) {
+            return result::err(
+                "get_blocks encountered a repeated parent block id during live-tip traversal."
+            );
+        }
+
+        StdLogosResult block_result = get_block(current_id);
+        if (!block_result.success) {
+            return result::err(
+                "get_blocks could not read live block `" + current_id + "`: " + block_result.error
+            );
+        }
+
+        json block;
+        try {
+            block = json::parse(block_result.value.get<std::string>());
+        } catch (const json::parse_error& parse_error) {
+            return result::err(
+                "get_blocks received invalid JSON while traversing live blocks: " + std::string(parse_error.what())
+            );
+        }
+
+        uint64_t slot = 0;
+        if (!block_slot(block, slot)) {
+            return result::err("get_blocks received a live block without a valid header slot.");
+        }
+        if (slot < from_slot) {
+            reached_lower_bound = true;
+            break;
+        }
+        std::string parent_id;
+        const bool needs_parent = slot > from_slot;
+        if (needs_parent && !parent_block_id(block, parent_id)) {
+            return result::err("get_blocks received a live block without a valid parent block id.");
+        }
+        if (slot <= to_slot) {
+            reverse_blocks.push_back(std::move(block));
+        }
+        if (!needs_parent) {
+            reached_lower_bound = true;
+            break;
+        }
+        current_id = std::move(parent_id);
+    }
+
+    if (!reached_lower_bound) {
+        return result::err(
+            "get_blocks reached the live-tip traversal limit before the requested lower slot."
+        );
+    }
+
+    std::reverse(reverse_blocks.begin(), reverse_blocks.end());
+    return result::ok(json(reverse_blocks).dump());
 }
 
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
@@ -1045,12 +1349,11 @@ StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash
         return result::err(operation_status::take_message(error));
     }
 
-    std::string out(value);
-    OperationStatus free_status = free_cstring(value);
-    if (!is_ok(&free_status)) {
-        fprintf(stderr, "Failed to free transaction string: %s\n", operation_status::take_message(free_status).c_str());
+    StdLogosResult raw = copy_cstring_result(value, "get_transaction");
+    if (!raw.success) {
+        return raw;
     }
-    return result::ok(std::move(out));
+    return normalize_transaction_json(raw.value.get<std::string>(), bytes_to_hex(bytes.data(), bytes.size()));
 }
 
 // Cryptarchia
@@ -1065,16 +1368,56 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         return result::err(operation_status::take_message(error));
     }
 
+    if (!value) {
+        return result::err("get_cryptarchia_info returned an empty response.");
+    }
+
+    HeaderId lib_header{};
+    std::memcpy(lib_header, value->lib, sizeof(lib_header));
+
     json obj;
     obj["lib"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->lib), ADDRESS_BYTES);
     obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->tip), ADDRESS_BYTES);
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
-    obj["mode"] = (value->mode == State::Online) ? "Online" : "Bootstrapping";
+    switch (value->mode) {
+    case State::Online:
+        obj["mode"] = "Online";
+        break;
+    case State::Bootstrapping:
+        obj["mode"] = "Bootstrapping";
+        break;
+    case State::NotStarted:
+        obj["mode"] = "NotStarted";
+        break;
+    default:
+        obj["mode"] = "Unknown";
+        break;
+    }
 
     OperationStatus free_status = free_cryptarchia_info(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free cryptarchia info: %s\n", operation_status::take_message(free_status).c_str());
+    }
+
+    // `CryptarchiaInfo` has no LIB slot in the current C ABI. The block is
+    // already addressable, so derive it without changing the node interface.
+    const std::string lib_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(lib_header), sizeof(lib_header));
+    StdLogosResult lib_block = get_block(lib_id);
+    if (!lib_block.success) {
+        fprintf(stderr, "Could not derive LIB slot: %s\n", lib_block.error.c_str());
+        return result::ok(obj.dump());
+    }
+    try {
+        const json block = json::parse(lib_block.value.get<std::string>());
+        uint64_t lib_slot = 0;
+        if (block_slot(block, lib_slot)) {
+            obj["lib_slot"] = lib_slot;
+        } else {
+            fprintf(stderr, "Could not derive LIB slot: block response has no valid header slot.\n");
+        }
+    } catch (const json::parse_error& parse_error) {
+        fprintf(stderr, "Could not derive LIB slot: invalid block JSON: %s\n", parse_error.what());
     }
     return result::ok(obj.dump());
 }
