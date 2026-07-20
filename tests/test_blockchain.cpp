@@ -1137,6 +1137,35 @@ LOGOS_TEST(get_block_returns_error_on_ffi_failure) {
     delete module;
 }
 
+LOGOS_TEST(explorer_empty_responses_identify_the_called_method) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_block").returns(static_cast<const char*>(nullptr));
+    t.mockCFunction("get_block_error").returns(0);
+    const StdLogosResult block = module->get_block(VALID_HEX);
+    LOGOS_ASSERT_FALSE(block.success);
+    LOGOS_ASSERT_EQ(block.error, std::string("get_block returned an empty response."));
+
+    t.mockCFunction("get_blocks").returns(static_cast<const char*>(nullptr));
+    t.mockCFunction("get_blocks_error").returns(0);
+    const StdLogosResult blocks = module->get_blocks(1, 10);
+    LOGOS_ASSERT_FALSE(blocks.success);
+    LOGOS_ASSERT_EQ(blocks.error, std::string("get_blocks returned an empty response."));
+
+    t.mockCFunction("get_transaction").returns(static_cast<const char*>(nullptr));
+    t.mockCFunction("get_transaction_error").returns(0);
+    const StdLogosResult transaction = module->get_transaction(VALID_HEX);
+    LOGOS_ASSERT_FALSE(transaction.success);
+    LOGOS_ASSERT_EQ(
+        transaction.error,
+        std::string("get_transaction returned an empty response.")
+    );
+    delete module;
+}
+
 LOGOS_TEST(get_blocks_returns_json_on_success) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
