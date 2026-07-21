@@ -199,9 +199,10 @@ namespace {
             }
 
             const std::vector<uint8_t> hash_bytes = parse_address_hex(id->get<std::string>());
-            (*mantle_transaction)["hash"] = hash_bytes.empty()
-                                                  ? id->get<std::string>()
-                                                  : bytes_to_hex(hash_bytes.data(), hash_bytes.size());
+            if (hash_bytes.empty()) {
+                continue;
+            }
+            (*mantle_transaction)["hash"] = bytes_to_hex(hash_bytes.data(), hash_bytes.size());
         }
     }
 
