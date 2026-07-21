@@ -169,6 +169,46 @@ namespace {
         return true;
     }
 
+    // Core block serializers expose canonical transaction identity as the
+    // envelope `id`; keep the module's established `mantle_tx.hash` shape.
+    bool normalize_block_transaction_hashes(json& block) {
+        if (!block.is_object()) {
+            return false;
+        }
+        auto transactions = block.find("transactions");
+        if (transactions == block.end() || !transactions->is_array()) {
+            return false;
+        }
+
+        bool normalized = false;
+        for (json& transaction : *transactions) {
+            if (!transaction.is_object()) {
+                continue;
+            }
+            const auto id = transaction.find("id");
+            auto mantle_transaction = transaction.find("mantle_tx");
+            if (id == transaction.end() || !id->is_string() || mantle_transaction == transaction.end() ||
+                !mantle_transaction->is_object()) {
+                continue;
+            }
+
+            const auto hash = mantle_transaction->find("hash");
+            const bool missing_hash = hash == mantle_transaction->end() || hash->is_null() ||
+                                      (hash->is_string() && hash->get<std::string>().empty());
+            if (!missing_hash) {
+                continue;
+            }
+
+            const std::vector<uint8_t> hash_bytes = parse_address_hex(id->get<std::string>());
+            if (hash_bytes.empty()) {
+                continue;
+            }
+            (*mantle_transaction)["hash"] = bytes_to_hex(hash_bytes.data(), hash_bytes.size());
+            normalized = true;
+        }
+        return normalized;
+    }
+
     StdLogosResult normalize_block_json(const std::string& raw, const std::string& requested_id) {
         json block;
         try {
@@ -197,6 +237,7 @@ namespace {
             }
         }
         header_object["id"] = requested_id;
+        normalize_block_transaction_hashes(block);
         return result::ok(block.dump());
     }
 
@@ -223,40 +264,6 @@ namespace {
             return result::err(std::move(error));
         }
         return result::ok(transaction.dump());
-    }
-
-    void normalize_event_transaction_hashes(json& block) {
-        if (!block.is_object()) {
-            return;
-        }
-        auto transactions = block.find("transactions");
-        if (transactions == block.end() || !transactions->is_array()) {
-            return;
-        }
-
-        for (json& transaction : *transactions) {
-            if (!transaction.is_object()) {
-                continue;
-            }
-            const auto id = transaction.find("id");
-            auto mantle_transaction = transaction.find("mantle_tx");
-            if (id == transaction.end() || !id->is_string() || mantle_transaction == transaction.end() ||
-                !mantle_transaction->is_object()) {
-                continue;
-            }
-
-            const auto hash = mantle_transaction->find("hash");
-            const bool missing_hash = hash == mantle_transaction->end() || hash->is_null() ||
-                                      (hash->is_string() && hash->get<std::string>().empty());
-            if (!missing_hash) {
-                continue;
-            }
-
-            const std::vector<uint8_t> hash_bytes = parse_address_hex(id->get<std::string>());
-            (*mantle_transaction)["hash"] = hash_bytes.empty()
-                                                  ? id->get<std::string>()
-                                                  : bytes_to_hex(hash_bytes.data(), hash_bytes.size());
-        }
     }
 
     bool block_slot(const json& block, uint64_t& slot) {
@@ -464,7 +471,7 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
     // callback, which runs on the core runtime.
     try {
         json parsed_block = json::parse(block);
-        normalize_event_transaction_hashes(parsed_block);
+        normalize_block_transaction_hashes(parsed_block);
 
         json event;
         event["block"] = std::move(parsed_block);
@@ -1223,8 +1230,20 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     } catch (const json::parse_error&) {
         return raw;
     }
-    if (!immutable_blocks.is_array() || !immutable_blocks.empty()) {
+    if (!immutable_blocks.is_array()) {
         return raw;
+    }
+    if (!immutable_blocks.empty()) {
+        bool normalized = false;
+        for (json& block : immutable_blocks) {
+            if (normalize_block_transaction_hashes(block)) {
+                normalized = true;
+            }
+        }
+        if (!normalized) {
+            return raw;
+        }
+        return result::ok(immutable_blocks.dump());
     }
 
     // The existing C API's range query reads immutable blocks only. For a

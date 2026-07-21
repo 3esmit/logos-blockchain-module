@@ -1111,6 +1111,29 @@ LOGOS_TEST(get_block_adds_requested_canonical_header_id) {
     delete module;
 }
 
+LOGOS_TEST(get_block_normalizes_core_transaction_id_to_mantle_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string transaction_id = "0x" + std::string(64, 'C');
+    const std::string response = std::string(
+        R"({"header":{"slot":42},"transactions":[{"id":")"
+    ) + transaction_id + R"(","mantle_tx":{"ops":[]}}]})";
+    t.mockCFunction("get_block").returns(response.c_str());
+    t.mockCFunction("get_block_error").returns(0);
+
+    const StdLogosResult result = module->get_block(VALID_HEX);
+    LOGOS_ASSERT_TRUE(result.success);
+    const json block = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(
+        block["transactions"][0]["mantle_tx"]["hash"].get<std::string>(),
+        std::string(64, 'c')
+    );
+    delete module;
+}
+
 LOGOS_TEST(get_block_returns_error_on_ffi_failure) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
@@ -1166,6 +1189,64 @@ LOGOS_TEST(get_blocks_returns_json_on_success) {
     LOGOS_ASSERT_TRUE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "slot"));
     LOGOS_ASSERT(t.cFunctionCalled("get_blocks"));
+    delete module;
+}
+
+LOGOS_TEST(get_blocks_normalizes_core_transaction_id_to_mantle_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string transaction_id = "0x" + std::string(64, 'C');
+    const std::string response = std::string(R"([{"header":{"slot":1},"transactions":[{"id":")") + transaction_id +
+                                 R"(","mantle_tx":{"ops":[]}}]}])";
+    t.mockCFunction("get_blocks").returns(response.c_str());
+    t.mockCFunction("get_blocks_error").returns(0);
+
+    const StdLogosResult result = module->get_blocks(1, 10);
+    LOGOS_ASSERT_TRUE(result.success);
+    const json blocks = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_EQ(blocks[0]["transactions"][0]["mantle_tx"]["hash"].get<std::string>(), std::string(64, 'c'));
+    delete module;
+}
+
+LOGOS_TEST(get_blocks_preserves_raw_json_when_no_transaction_hash_is_added) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string transaction_id(64, 'a');
+    const std::string response = std::string(
+        R"([ { "header" : { "slot" : 1 }, "transactions" : [ { "id" : ")")
+        + transaction_id + R"(", "mantle_tx" : { "hash" : ")" + transaction_id
+        + R"(" } } ] } ])";
+    t.mockCFunction("get_blocks").returns(response.c_str());
+    t.mockCFunction("get_blocks_error").returns(0);
+
+    const StdLogosResult result = module->get_blocks(1, 10);
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_EQ(result.value.get<std::string>(), response);
+    delete module;
+}
+
+LOGOS_TEST(get_blocks_omits_mantle_hash_for_malformed_core_transaction_id) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string malformed_id = "0x" + std::string(63, 'c') + "g";
+    const std::string response = std::string(R"([{"header":{"slot":1},"transactions":[{"id":")")
+        + malformed_id + R"(","mantle_tx":{"ops":[]}}]}])";
+    t.mockCFunction("get_blocks").returns(response.c_str());
+    t.mockCFunction("get_blocks_error").returns(0);
+
+    const StdLogosResult result = module->get_blocks(1, 10);
+    LOGOS_ASSERT_TRUE(result.success);
+    const json blocks = json::parse(result.value.get<std::string>());
+    LOGOS_ASSERT_FALSE(blocks[0]["transactions"][0]["mantle_tx"].contains("hash"));
     delete module;
 }
 
