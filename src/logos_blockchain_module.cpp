@@ -5,7 +5,6 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <cctype>
 #include <charconv>
-#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -1335,6 +1334,36 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     return result::ok(json(reverse_blocks).dump());
 }
 
+StdLogosResult LogosBlockchainModule::get_time_info() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_time_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_time_info");
+}
+
+StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
+    const uint64_t from_slot,
+    const uint64_t to_slot,
+    const uint64_t blocks_limit
+) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_finalized_blocks_range(node, from_slot, to_slot, blocks_limit);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_finalized_blocks_range");
+}
+
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
     if (!node) {
         return result::err("The node is not running.");
@@ -1382,14 +1411,12 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         return result::err("get_cryptarchia_info returned an empty response.");
     }
 
-    HeaderId lib_header{};
-    std::memcpy(lib_header, value->lib, sizeof(lib_header));
-
     json obj;
     obj["lib"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->lib), ADDRESS_BYTES);
     obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->tip), ADDRESS_BYTES);
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
+    obj["lib_slot"] = static_cast<int64_t>(value->lib_slot);
     obj["genesis_id"] =
         bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), sizeof(value->genesis_id));
     switch (value->mode) {
@@ -1410,26 +1437,6 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     OperationStatus free_status = free_cryptarchia_info(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free cryptarchia info: %s\n", operation_status::take_message(free_status).c_str());
-    }
-
-    // `CryptarchiaInfo` has no LIB slot in the current C ABI. The block is
-    // already addressable, so derive it without changing the node interface.
-    const std::string lib_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(lib_header), sizeof(lib_header));
-    StdLogosResult lib_block = get_block(lib_id);
-    if (!lib_block.success) {
-        fprintf(stderr, "Could not derive LIB slot: %s\n", lib_block.error.c_str());
-        return result::ok(obj.dump());
-    }
-    try {
-        const json block = json::parse(lib_block.value.get<std::string>());
-        uint64_t lib_slot = 0;
-        if (block_slot(block, lib_slot)) {
-            obj["lib_slot"] = lib_slot;
-        } else {
-            fprintf(stderr, "Could not derive LIB slot: block response has no valid header slot.\n");
-        }
-    } catch (const json::parse_error& parse_error) {
-        fprintf(stderr, "Could not derive LIB slot: invalid block JSON: %s\n", parse_error.what());
     }
     return result::ok(obj.dump());
 }
