@@ -1392,7 +1392,7 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
     obj["genesis_id"] =
-        bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), ADDRESS_BYTES);
+        bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), sizeof(value->genesis_id));
     switch (value->mode) {
     case State::Online:
         obj["mode"] = "Online";
