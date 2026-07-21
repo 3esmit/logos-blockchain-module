@@ -18,6 +18,8 @@ typedef uint8_t HeaderId[32];
 typedef uint8_t TxHash[32];
 typedef Hash NoteId;
 
+#define CRYPTARCHIA_INFO_ABI_VERSION 1
+
 // Opaque node handle
 typedef struct LogosBlockchainNode LogosBlockchainNode;
 
@@ -138,6 +140,7 @@ typedef struct {
     uint64_t slot;
     uint64_t height;
     State mode;
+    uint8_t genesis_id[32];
 } CryptarchiaInfo;
 
 // Result types (C++ structured bindings decompose these)
@@ -230,6 +233,7 @@ StringResult get_blocks(LogosBlockchainNode* node, uint64_t from_slot, uint64_t 
 StringResult get_transaction(LogosBlockchainNode* node, const TxHash* tx_hash);
 
 // Cryptarchia
+uint32_t cryptarchia_info_abi_version(void);
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node);
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info);
 
