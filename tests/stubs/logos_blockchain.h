@@ -18,7 +18,7 @@ typedef uint8_t HeaderId[32];
 typedef uint8_t TxHash[32];
 typedef Hash NoteId;
 
-#define CRYPTARCHIA_INFO_ABI_VERSION 1
+#define CRYPTARCHIA_INFO_ABI_VERSION 2
 
 // Opaque node handle
 typedef struct LogosBlockchainNode LogosBlockchainNode;
@@ -141,6 +141,7 @@ typedef struct {
     uint64_t height;
     State mode;
     uint8_t genesis_id[32];
+    uint64_t lib_slot;
 } CryptarchiaInfo;
 
 // Result types (C++ structured bindings decompose these)
@@ -154,6 +155,8 @@ typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResul
 typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableVouchersResult;
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
+typedef StringResult FfiGetTimeInfoResult;
+typedef StringResult FfiGetFinalizedBlocksRangeResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
 
 // Block event callback
@@ -234,6 +237,13 @@ BlendHashResult blend_join_as_core_node(
 StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id);
 StringResult get_blocks(LogosBlockchainNode* node, uint64_t from_slot, uint64_t to_slot);
 StringResult get_transaction(LogosBlockchainNode* node, const TxHash* tx_hash);
+FfiGetTimeInfoResult get_time_info(const LogosBlockchainNode* node);
+FfiGetFinalizedBlocksRangeResult get_finalized_blocks_range(
+    const LogosBlockchainNode* node,
+    uint64_t from_slot,
+    uint64_t to_slot,
+    uint64_t blocks_limit
+);
 
 // Cryptarchia
 uint32_t cryptarchia_info_abi_version(void);
