@@ -171,15 +171,16 @@ namespace {
 
     // Core block serializers expose canonical transaction identity as the
     // envelope `id`; keep the module's established `mantle_tx.hash` shape.
-    void normalize_block_transaction_hashes(json& block) {
+    bool normalize_block_transaction_hashes(json& block) {
         if (!block.is_object()) {
-            return;
+            return false;
         }
         auto transactions = block.find("transactions");
         if (transactions == block.end() || !transactions->is_array()) {
-            return;
+            return false;
         }
 
+        bool normalized = false;
         for (json& transaction : *transactions) {
             if (!transaction.is_object()) {
                 continue;
@@ -203,7 +204,9 @@ namespace {
                 continue;
             }
             (*mantle_transaction)["hash"] = bytes_to_hex(hash_bytes.data(), hash_bytes.size());
+            normalized = true;
         }
+        return normalized;
     }
 
     StdLogosResult normalize_block_json(const std::string& raw, const std::string& requested_id) {
@@ -1231,8 +1234,14 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
         return raw;
     }
     if (!immutable_blocks.empty()) {
+        bool normalized = false;
         for (json& block : immutable_blocks) {
-            normalize_block_transaction_hashes(block);
+            if (normalize_block_transaction_hashes(block)) {
+                normalized = true;
+            }
+        }
+        if (!normalized) {
+            return raw;
         }
         return result::ok(immutable_blocks.dump());
     }

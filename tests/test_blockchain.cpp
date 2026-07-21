@@ -1188,6 +1188,26 @@ LOGOS_TEST(get_blocks_normalizes_core_transaction_id_to_mantle_hash) {
     delete module;
 }
 
+LOGOS_TEST(get_blocks_preserves_raw_json_when_no_transaction_hash_is_added) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string transaction_id(64, 'a');
+    const std::string response = std::string(
+        R"([ { "header" : { "slot" : 1 }, "transactions" : [ { "id" : ")")
+        + transaction_id + R"(", "mantle_tx" : { "hash" : ")" + transaction_id
+        + R"(" } } ] } ])";
+    t.mockCFunction("get_blocks").returns(response.c_str());
+    t.mockCFunction("get_blocks_error").returns(0);
+
+    const StdLogosResult result = module->get_blocks(1, 10);
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_EQ(result.value.get<std::string>(), response);
+    delete module;
+}
+
 LOGOS_TEST(get_blocks_omits_mantle_hash_for_malformed_core_transaction_id) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
