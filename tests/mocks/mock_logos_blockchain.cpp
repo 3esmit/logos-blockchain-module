@@ -345,9 +345,15 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     s_fakeCryptarchiaInfo.mode = static_cast<State>(LOGOS_CMOCK_RETURN(int, "cryptarchia_mode"));
     memset(s_fakeCryptarchiaInfo.lib, 0xEE, 32);
     memset(s_fakeCryptarchiaInfo.tip, 0xFF, 32);
+    memset(s_fakeCryptarchiaInfo.genesis_id, 0xDD, 32);
     result.value = &s_fakeCryptarchiaInfo;
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_cryptarchia_info_error"));
     return result;
+}
+
+uint32_t cryptarchia_info_abi_version(void) {
+    LOGOS_CMOCK_RECORD("cryptarchia_info_abi_version");
+    return static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "cryptarchia_info_abi_version"));
 }
 
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info) {

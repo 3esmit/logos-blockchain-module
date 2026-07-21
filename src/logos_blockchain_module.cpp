@@ -72,6 +72,7 @@ namespace {
     constexpr int ADDRESS_BYTES = sizeof(Hash);
     constexpr int TX_HASH_BYTES = sizeof(TxHash);
     constexpr int ADDRESS_HEX_LEN = ADDRESS_BYTES * 2;
+    constexpr uint32_t EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION = CRYPTARCHIA_INFO_ABI_VERSION;
 
     std::vector<uint8_t> parse_address_hex(const std::string& address_hex) {
         std::string hex = address_hex;
@@ -1364,6 +1365,15 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         return result::err("The node is not running.");
     }
 
+    const uint32_t abi_version = ::cryptarchia_info_abi_version();
+    if (abi_version != EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION) {
+        return result::err(
+            "Incompatible CryptarchiaInfo C ABI: expected version " +
+            std::to_string(EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION) + ", got " +
+            std::to_string(abi_version) + ". Use a matching logos-blockchain C library."
+        );
+    }
+
     auto [value, error] = ::get_cryptarchia_info(node);
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));
@@ -1381,6 +1391,8 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->tip), ADDRESS_BYTES);
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
+    obj["genesis_id"] =
+        bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), ADDRESS_BYTES);
     switch (value->mode) {
     case State::Online:
         obj["mode"] = "Online";

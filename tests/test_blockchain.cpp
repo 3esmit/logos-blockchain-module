@@ -53,6 +53,7 @@ static LogosBlockchainModule* createStartedModule(LogosTestContext& t, TempDir& 
 
     t.mockCFunction("start_lb_node").returns(1);
     t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("cryptarchia_info_abi_version").returns(CRYPTARCHIA_INFO_ABI_VERSION);
 
     StdLogosResult rc = module->start(tmpDir.filePath("config.json"), "");
     if (!rc.success) {
@@ -1429,8 +1430,10 @@ LOGOS_TEST(get_cryptarchia_info_returns_json_on_success) {
     LOGOS_ASSERT_EQ(info["mode"].get<std::string>(), std::string("Online"));
     LOGOS_ASSERT_TRUE(info.contains("lib"));
     LOGOS_ASSERT_TRUE(info.contains("tip"));
+    LOGOS_ASSERT_EQ(info["genesis_id"].get<std::string>(), std::string(64, 'd'));
     LOGOS_ASSERT_EQ(info["lib_slot"].get<uint64_t>(), static_cast<uint64_t>(99));
     LOGOS_ASSERT(t.cFunctionCalled("get_cryptarchia_info"));
+    LOGOS_ASSERT(t.cFunctionCalled("cryptarchia_info_abi_version"));
     LOGOS_ASSERT(t.cFunctionCalled("free_cryptarchia_info"));
     LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
     delete module;
@@ -1479,6 +1482,22 @@ LOGOS_TEST(get_cryptarchia_info_returns_error_on_ffi_failure) {
     t.mockCFunction("get_cryptarchia_info_error").returns(1);
 
     LOGOS_ASSERT_FALSE(module->get_cryptarchia_info().success);
+    delete module;
+}
+
+LOGOS_TEST(get_cryptarchia_info_rejects_an_incompatible_abi_version) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("cryptarchia_info_abi_version").returns(2);
+
+    StdLogosResult result = module->get_cryptarchia_info();
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "Incompatible CryptarchiaInfo C ABI"));
+    LOGOS_ASSERT(t.cFunctionCalled("cryptarchia_info_abi_version"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("get_cryptarchia_info"));
     delete module;
 }
 
