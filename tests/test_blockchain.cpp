@@ -1194,7 +1194,9 @@ LOGOS_TEST(get_blocks_omits_mantle_hash_for_malformed_core_transaction_id) {
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
-    const std::string response = R"([{"header":{"slot":1},"transactions":[{"id":"not-a-canonical-transaction-id","mantle_tx":{"ops":[]}}]}])";
+    const std::string malformed_id = "0x" + std::string(63, 'c') + "g";
+    const std::string response = std::string(R"([{"header":{"slot":1},"transactions":[{"id":")")
+        + malformed_id + R"(","mantle_tx":{"ops":[]}}]}])";
     t.mockCFunction("get_blocks").returns(response.c_str());
     t.mockCFunction("get_blocks_error").returns(0);
 
