@@ -13,10 +13,13 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: x86_64-linux
+            system: x86_64-linux
           - os: ubuntu-24.04-arm
             arch: aarch64-linux
+            system: aarch64-linux
           - os: macos-14
-            arch: aarch64-macos
+            arch: darwin-arm64
+            system: aarch64-darwin
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -31,6 +34,9 @@ jobs:
         with:
           name: logos-co
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Verify Testnet package profile
+        run: nix build '.#checks.${{ matrix.system }}.testnet-package-profile' -L
 
       - name: Build portable module
         run: nix build '.#lgx-portable' --out-link result-lgx-portable
@@ -66,4 +72,3 @@ jobs:
           generate_release_notes: false
           draft: true
           tag_name: ${{ github.ref_name }}
-

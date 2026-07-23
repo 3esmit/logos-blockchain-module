@@ -16,6 +16,10 @@ std::string g_lastGeneratedOutput;
 std::string g_lastGeneratedStatePath;
 std::string g_lastGeneratedStoragePath;
 std::string g_lastGeneratedLogsPath;
+int g_lastGeneratedIbd = -1;
+uint64_t g_lastFinalizedBlocksRangeFromSlot = 0;
+uint64_t g_lastFinalizedBlocksRangeToSlot = 0;
+uint64_t g_lastFinalizedBlocksRangeLimit = 0;
 
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
@@ -66,6 +70,7 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
     g_lastGeneratedStatePath = args.state_path ? args.state_path : "<null>";
     g_lastGeneratedStoragePath = args.storage_path ? args.storage_path : "<null>";
     g_lastGeneratedLogsPath = args.logs_path ? args.logs_path : "<null>";
+    g_lastGeneratedIbd = args.ibd ? (*args.ibd ? 1 : 0) : -1;
     return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config"));
 }
 
@@ -78,8 +83,8 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
     return result;
 }
 
-OperationStatus shutdown_node(LogosBlockchainNode* node) {
-    LOGOS_CMOCK_RECORD("shutdown_node");
+OperationStatus stop_node(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("stop_node");
     s_blockCallback = nullptr;
     return make_status(0);
 }
@@ -294,8 +299,11 @@ FfiChannelDepositResult channel_deposit_with_notes(
 
 BlendHashResult blend_join_as_core_node(
     LogosBlockchainNode* node,
-    const char* locator,
-    const uint8_t* locked_note_id)
+    const uint8_t* provider_id,
+    const uint8_t* zk_id,
+    const uint8_t* locked_note_id,
+    const char** locators,
+    size_t locators_count)
 {
     LOGOS_CMOCK_RECORD("blend_join_as_core_node");
     BlendHashResult result;
@@ -336,6 +344,32 @@ StringResult get_transaction(LogosBlockchainNode* node, const TxHash* tx_hash) {
     return result;
 }
 
+FfiGetTimeInfoResult get_time_info(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_time_info");
+    FfiGetTimeInfoResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_time_info");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_time_info_error"));
+    return result;
+}
+
+FfiGetFinalizedBlocksRangeResult get_finalized_blocks_range(
+    const LogosBlockchainNode* node,
+    const uint64_t from_slot,
+    const uint64_t to_slot,
+    const uint64_t blocks_limit
+) {
+    LOGOS_CMOCK_RECORD("get_finalized_blocks_range");
+    g_lastFinalizedBlocksRangeFromSlot = from_slot;
+    g_lastFinalizedBlocksRangeToSlot = to_slot;
+    g_lastFinalizedBlocksRangeLimit = blocks_limit;
+    FfiGetFinalizedBlocksRangeResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_finalized_blocks_range");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_finalized_blocks_range_error"));
+    return result;
+}
+
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("get_cryptarchia_info");
     CryptarchiaInfoResult result;
@@ -346,6 +380,7 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     memset(s_fakeCryptarchiaInfo.lib, 0xEE, 32);
     memset(s_fakeCryptarchiaInfo.tip, 0xFF, 32);
     memset(s_fakeCryptarchiaInfo.genesis_id, 0xDD, 32);
+    s_fakeCryptarchiaInfo.lib_slot = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "cryptarchia_lib_slot"));
     result.value = &s_fakeCryptarchiaInfo;
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_cryptarchia_info_error"));
     return result;

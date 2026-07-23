@@ -130,8 +130,10 @@ public:
 
     // Blend
     [[nodiscard]] StdLogosResult blend_join_as_core_node(
-        const std::string& locator,
-        const std::string& locked_note_id_hex
+        const std::string& provider_id_hex,
+        const std::string& zk_id_hex,
+        const std::string& locked_note_id_hex,
+        const std::vector<std::string>& locators
     ) const;
 
     // Explorer. Direct reads normalize known request identities into the
@@ -142,6 +144,15 @@ public:
     [[nodiscard]] StdLogosResult get_block(const std::string& header_id_hex) const;
     [[nodiscard]] StdLogosResult get_blocks(uint64_t from_slot, uint64_t to_slot) const;
     [[nodiscard]] StdLogosResult get_transaction(const std::string& tx_hash_hex) const;
+
+    // Catalog. These are direct projections of the matching logos-blockchain
+    // C API calls so every module host can read the snapshot-safe catalog data.
+    [[nodiscard]] StdLogosResult get_time_info() const;
+    [[nodiscard]] StdLogosResult get_finalized_blocks_range(
+        uint64_t from_slot,
+        uint64_t to_slot,
+        uint64_t blocks_limit
+    ) const;
 
     // Cryptarchia
     [[nodiscard]] StdLogosResult get_cryptarchia_info() const;
