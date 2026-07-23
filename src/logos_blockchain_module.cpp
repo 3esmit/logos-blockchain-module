@@ -557,6 +557,16 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
             }
             parsed_args["output"] = (base / output_rel).lexically_normal().string();
 
+            const fs::path output_parent = fs::path(parsed_args["output"].get<std::string>()).parent_path();
+            std::error_code create_directories_error;
+            fs::create_directories(output_parent, create_directories_error);
+            if (create_directories_error) {
+                return result::err(
+                    "Failed to create configuration directory '" + output_parent.string() +
+                    "': " + create_directories_error.message()
+                );
+            }
+
             fprintf(
                 stderr,
                 "generate_user_config: routing output/state/storage/logs under instance persistence path: %s\n",
