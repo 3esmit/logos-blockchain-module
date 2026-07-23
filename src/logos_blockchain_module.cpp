@@ -344,7 +344,7 @@ namespace {
         std::string state_path_data;
         std::string storage_path_data;
         std::string logs_path_data;
-        bool skip_ibd_val;
+        bool ibd_val = true;
         std::string log_filter_data;
         std::string kms_file_data;
 
@@ -435,13 +435,16 @@ namespace {
                 ffi_args.logs_path = nullptr;
             }
 
-            // skip_ibd (bool -> const bool*)
+            // The release C API accepts `ibd`, while Inspector's established
+            // JSON contract uses the inverse `skip_ibd`. Preserve both input
+            // forms and explicitly default to IBD so a generated Testnet
+            // configuration synchronizes rather than remaining at genesis.
             if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
-                skip_ibd_val = args["skip_ibd"].get<bool>();
-                ffi_args.skip_ibd = &skip_ibd_val;
-            } else {
-                ffi_args.skip_ibd = nullptr;
+                ibd_val = !args["skip_ibd"].get<bool>();
+            } else if (args.contains("ibd") && args["ibd"].is_boolean()) {
+                ibd_val = args["ibd"].get<bool>();
             }
+            ffi_args.ibd = &ibd_val;
 
             // log_filter (string -> const char*)
             if (args.contains("log_filter") && args["log_filter"].is_string()) {
@@ -648,7 +651,7 @@ StdLogosResult LogosBlockchainModule::stop() {
 
     s_instance = nullptr;
 
-    OperationStatus status = shutdown_node(node);
+    OperationStatus status = stop_node(node);
     if (!is_ok(&status)) {
         fprintf(stderr, "Could not stop the node: %s\n", operation_status::take_message(status).c_str());
     }
@@ -1162,15 +1165,23 @@ StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
 // Blend
 
 StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
-    const std::string& locator,
-    const std::string& locked_note_id_hex
+    const std::string& provider_id_hex,
+    const std::string& zk_id_hex,
+    const std::string& locked_note_id_hex,
+    const std::vector<std::string>& locators
 ) const {
     if (!node) {
         return result::err("The node is not running.");
     }
 
-    if (locator.empty()) {
-        return result::err("Invalid locator (must not be empty).");
+    const std::vector<uint8_t> provider_id_bytes = parse_address_hex(provider_id_hex);
+    if (provider_id_bytes.empty() || static_cast<int>(provider_id_bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Invalid provider_id_hex (64 hex characters required).");
+    }
+
+    const std::vector<uint8_t> zk_id_bytes = parse_address_hex(zk_id_hex);
+    if (zk_id_bytes.empty() || static_cast<int>(zk_id_bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Invalid zk_id_hex (64 hex characters required).");
     }
 
     const std::vector<uint8_t> locked_note_id_bytes = parse_address_hex(locked_note_id_hex);
@@ -1178,10 +1189,19 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
+    std::vector<const char*> locators_ptrs;
+    locators_ptrs.reserve(locators.size());
+    for (const std::string& locator : locators) {
+        locators_ptrs.push_back(locator.c_str());
+    }
+
     auto [value, error] = ::blend_join_as_core_node(
         node,
-        locator.c_str(),
-        locked_note_id_bytes.data()
+        provider_id_bytes.data(),
+        zk_id_bytes.data(),
+        locked_note_id_bytes.data(),
+        locators_ptrs.data(),
+        locators_ptrs.size()
     );
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));
@@ -1346,6 +1366,36 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     return result::ok(json(reverse_blocks).dump());
 }
 
+StdLogosResult LogosBlockchainModule::get_time_info() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_time_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_time_info");
+}
+
+StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
+    const uint64_t from_slot,
+    const uint64_t to_slot,
+    const uint64_t blocks_limit
+) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_finalized_blocks_range(node, from_slot, to_slot, blocks_limit);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_finalized_blocks_range");
+}
+
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
     if (!node) {
         return result::err("The node is not running.");
@@ -1393,14 +1443,12 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         return result::err("get_cryptarchia_info returned an empty response.");
     }
 
-    HeaderId lib_header{};
-    std::memcpy(lib_header, value->lib, sizeof(lib_header));
-
     json obj;
     obj["lib"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->lib), ADDRESS_BYTES);
     obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->tip), ADDRESS_BYTES);
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
+    obj["lib_slot"] = static_cast<int64_t>(value->lib_slot);
     obj["genesis_id"] =
         bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), sizeof(value->genesis_id));
     switch (value->mode) {
@@ -1423,24 +1471,5 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         fprintf(stderr, "Failed to free cryptarchia info: %s\n", operation_status::take_message(free_status).c_str());
     }
 
-    // `CryptarchiaInfo` has no LIB slot in the current C ABI. The block is
-    // already addressable, so derive it without changing the node interface.
-    const std::string lib_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(lib_header), sizeof(lib_header));
-    StdLogosResult lib_block = get_block(lib_id);
-    if (!lib_block.success) {
-        fprintf(stderr, "Could not derive LIB slot: %s\n", lib_block.error.c_str());
-        return result::ok(obj.dump());
-    }
-    try {
-        const json block = json::parse(lib_block.value.get<std::string>());
-        uint64_t lib_slot = 0;
-        if (block_slot(block, lib_slot)) {
-            obj["lib_slot"] = lib_slot;
-        } else {
-            fprintf(stderr, "Could not derive LIB slot: block response has no valid header slot.\n");
-        }
-    } catch (const json::parse_error& parse_error) {
-        fprintf(stderr, "Could not derive LIB slot: invalid block JSON: %s\n", parse_error.what());
-    }
     return result::ok(obj.dump());
 }

@@ -46,3 +46,6 @@ jobs:
 
       - name: Run unit tests
         run: nix build '.#checks.x86_64-linux.unit-tests' -L
+
+      - name: Verify Testnet package profile
+        run: nix build '.#checks.x86_64-linux.testnet-package-profile' -L
