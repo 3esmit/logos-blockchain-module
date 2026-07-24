@@ -11,8 +11,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  release-workflow:
+    name: Validate release workflow
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color .github/workflows/ci.yml .github/workflows/release.yml
+
+      - name: Validate source release contract
+        run: ./scripts/test-source-release-workflow.sh
+
+  build:
+    name: Build portable package (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux AMD64
+            runner: ubuntu-latest
+            system: x86_64-linux
+          - platform: macOS ARM64
+            runner: macos-14
+            system: aarch64-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -26,8 +56,11 @@ jobs:
           name: logos-co
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Build module
-        run: nix build
+      - name: Build native portable package
+        run: nix build '.#lgx-portable' -L
+
+      - name: Verify native package profile
+        run: nix build '.#checks.${{ matrix.system }}.testnet-package-profile' -L
 
   test:
     runs-on: ubuntu-latest
@@ -46,6 +79,3 @@ jobs:
 
       - name: Run unit tests
         run: nix build '.#checks.x86_64-linux.unit-tests' -L
-
-      - name: Verify Testnet package profile
-        run: nix build '.#checks.x86_64-linux.testnet-package-profile' -L

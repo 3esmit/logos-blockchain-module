@@ -1,74 +1,45 @@
-name: Multi-Platform Nix Release
+name: Publish Blockchain Module
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Rebuild and replace an existing package release for this version."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            arch: x86_64-linux
-            system: x86_64-linux
-          - os: ubuntu-24.04-arm
-            arch: aarch64-linux
-            system: aarch64-linux
-          - os: macos-14
-            arch: darwin-arm64
-            system: aarch64-darwin
-
-    runs-on: ${{ matrix.os }}
+  preflight:
+    name: Validate source release contract
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+      - name: Validate default branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
 
-      - uses: cachix/cachix-action@v15
-        with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Verify Testnet package profile
-        run: nix build '.#checks.${{ matrix.system }}.testnet-package-profile' -L
-
-      - name: Build portable module
-        run: nix build '.#lgx-portable' --out-link result-lgx-portable
-
-      - name: Extract LGX bundle
-        run: cp result-lgx-portable/*.lgx ./logos-module-${{ matrix.arch }}.lgx
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: logos-module-${{ matrix.arch }}
-          path: '*.lgx'
-          if-no-files-found: error
+      - name: Validate release contract
+        run: ./scripts/test-source-release-workflow.sh
 
   release:
-    needs: build
-    runs-on: ubuntu-latest
+    needs: preflight
     permissions:
-      contents: write 
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-binaries
-          pattern: logos-module-*
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-binaries/*.lgx
-          generate_release_notes: false
-          draft: true
-          tag_name: ${{ github.ref_name }}
+      contents: write
+    uses: 3esmit/logos-modules-release-action/.github/workflows/release.yml@670e3d8b704207da88947d3417767fa34a9c5e28
+    with:
+      module_path: .
+      metadata_path: metadata.json
+      build_attr: lgx-portable
+      variants: linux-amd64,darwin-arm64
+      require_all_variants: true
+      dispatch_rebuild_index: false
+      prerelease: true
+      signing_mode: none
+      skip_if_published: ${{ !inputs.force_build }}
