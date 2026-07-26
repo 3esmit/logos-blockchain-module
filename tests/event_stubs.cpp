@@ -12,9 +12,31 @@
 
 #include "logos_blockchain_module.h"
 
+#include <mutex>
 #include <string>
+#include <vector>
 
 std::string g_lastNewBlockJson;
+
+namespace {
+    std::mutex nodeChangedEventsMutex;
+    std::vector<std::string> nodeChangedEvents;
+} // namespace
+
+void reset_node_changed_events() {
+    std::lock_guard<std::mutex> lock(nodeChangedEventsMutex);
+    nodeChangedEvents.clear();
+}
+
+std::vector<std::string> node_changed_events() {
+    std::lock_guard<std::mutex> lock(nodeChangedEventsMutex);
+    return nodeChangedEvents;
+}
+
+void LogosBlockchainModule::nodeChanged(const std::string& event) {
+    std::lock_guard<std::mutex> lock(nodeChangedEventsMutex);
+    nodeChangedEvents.push_back(event);
+}
 
 void LogosBlockchainModule::newBlock(const std::string& blockJson) {
     g_lastNewBlockJson = blockJson;

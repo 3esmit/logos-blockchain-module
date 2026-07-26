@@ -86,7 +86,7 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
 OperationStatus stop_node(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("stop_node");
     s_blockCallback = nullptr;
-    return make_status(0);
+    return make_status(LOGOS_CMOCK_RETURN(int, "stop_node"));
 }
 
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path) {

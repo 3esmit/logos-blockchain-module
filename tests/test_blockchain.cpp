@@ -4,6 +4,7 @@
 #include <logos_test.h>
 #include "logos_blockchain_module.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -21,6 +22,41 @@ static const std::string VALID_HEX_WITH_PREFIX = "0x" + std::string(64, 'b');
 
 static bool contains(const std::string& s, const std::string& sub) {
     return s.find(sub) != std::string::npos;
+}
+
+void reset_node_changed_events();
+std::vector<std::string> node_changed_events();
+
+static json read_node_status(LogosBlockchainModule& module) {
+    return json::parse(module.nodeStatus());
+}
+
+static json invoke_node_action(LogosBlockchainModule& module, const json& request) {
+    return json::parse(module.nodeAction(request.dump()));
+}
+
+static json lifecycle_command(
+    const std::string& operation_id,
+    const std::string& action,
+    const json& parameters = json::object()
+) {
+    json command = {
+        {"schema", "logos.managed_node_lifecycle.command"},
+        {"version", 1},
+        {"operation_id", operation_id},
+        {"action", action},
+    };
+    if (!parameters.empty())
+        command["parameters"] = parameters;
+    return command;
+}
+
+static std::vector<json> lifecycle_events() {
+    std::vector<json> result;
+    for (const std::string& event : node_changed_events()) {
+        result.push_back(json::parse(event));
+    }
+    return result;
 }
 
 static std::string test_hex_id(const size_t value) {
@@ -94,6 +130,192 @@ LOGOS_TEST(generate_user_config_from_json_string) {
 
     LOGOS_ASSERT_TRUE(module.generate_user_config(R"({"output":"/tmp/out.json"})").success);
     LOGOS_ASSERT(t.cFunctionCalled("generate_user_config"));
+}
+
+LOGOS_TEST(node_status_reports_a_versioned_snapshot_before_initialization) {
+    LogosBlockchainModule module;
+
+    const json status = read_node_status(module);
+    LOGOS_ASSERT_EQ(status.at("schema").get<std::string>(), std::string("logos.managed_node_lifecycle.snapshot"));
+    LOGOS_ASSERT_EQ(status.at("version").get<int>(), 1);
+    LOGOS_ASSERT_FALSE(status.at("instance_id").get<std::string>().empty());
+    LOGOS_ASSERT_EQ(status.at("epoch").get<std::uint64_t>(), 0U);
+    LOGOS_ASSERT_EQ(status.at("sequence").get<std::uint64_t>(), 0U);
+    LOGOS_ASSERT_EQ(status.at("scope").at("kind").get<std::string>(), std::string("bedrock"));
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("uninitialized"));
+    LOGOS_ASSERT_EQ(status.at("health").get<std::string>(), std::string("unknown"));
+    LOGOS_ASSERT_EQ(status.at("supported_actions").size(), static_cast<size_t>(1));
+    LOGOS_ASSERT_EQ(status.at("supported_actions").at(0).get<std::string>(), std::string("initialize"));
+}
+
+LOGOS_TEST(node_action_initializes_with_ordered_redacted_events) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config").returns(0);
+    reset_node_changed_events();
+
+    const std::string secret = "must-not-appear-in-lifecycle-output";
+    const json request = lifecycle_command(
+        "bedrock-initialize-v1",
+        "initialize",
+        {{"config",
+          json({
+                   {"output", tmp_dir.filePath("node.json")},
+                   {"external_address", secret},
+               })
+              .dump()}}
+    );
+    const json acknowledgement = invoke_node_action(module, request);
+
+    LOGOS_ASSERT_EQ(acknowledgement.at("schema").get<std::string>(), std::string("logos.managed_node_lifecycle.ack"));
+    LOGOS_ASSERT_TRUE(acknowledgement.at("accepted").get<bool>());
+    LOGOS_ASSERT_FALSE(acknowledgement.at("duplicate").get<bool>());
+    LOGOS_ASSERT_TRUE(acknowledgement.at("error").is_null());
+    LOGOS_ASSERT(t.cFunctionCalled("generate_user_config"));
+
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(0).at("phase").get<std::string>(), std::string("accepted"));
+    LOGOS_ASSERT_EQ(events.at(0).at("status").at("state").get<std::string>(), std::string("initializing"));
+    LOGOS_ASSERT_EQ(events.at(1).at("phase").get<std::string>(), std::string("settled"));
+    LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
+    LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
+    LOGOS_ASSERT_TRUE(events.at(1).at("emitted_at_ms").get<std::int64_t>() > 0);
+    LOGOS_ASSERT_TRUE(
+        events.at(1).at("sequence").get<std::uint64_t>() > events.at(0).at("sequence").get<std::uint64_t>()
+    );
+    LOGOS_ASSERT_TRUE(events.at(1).dump().find(secret) == std::string::npos);
+
+    const json status = read_node_status(module);
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
+    LOGOS_ASSERT_EQ(status.at("epoch").get<std::uint64_t>(), 1U);
+    LOGOS_ASSERT_TRUE(status.dump().find(secret) == std::string::npos);
+}
+
+LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config").returns(0);
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+
+    LOGOS_ASSERT_TRUE(invoke_node_action(
+                          module,
+                          lifecycle_command(
+                              "bedrock-initialize-start-stop",
+                              "initialize",
+                              {{"config", json({{"output", tmp_dir.filePath("node.json")}}).dump()}}
+                          )
+    )
+                          .at("accepted")
+                          .get<bool>());
+
+    reset_node_changed_events();
+    const json started =
+        invoke_node_action(module, lifecycle_command("bedrock-start-v1", "start", {{"deployment", ""}}));
+    LOGOS_ASSERT_TRUE(started.at("accepted").get<bool>());
+    LOGOS_ASSERT(t.cFunctionCalled("start_lb_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("subscribe_to_new_blocks"));
+    std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(0).at("status").at("state").get<std::string>(), std::string("starting"));
+    LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("running"));
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
+
+    reset_node_changed_events();
+    const json stopped = invoke_node_action(module, lifecycle_command("bedrock-stop-v1", "stop"));
+    LOGOS_ASSERT_TRUE(stopped.at("accepted").get<bool>());
+    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
+    LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
+}
+
+LOGOS_TEST(node_action_rejects_stale_and_reused_operation_ids_without_dispatch) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config").returns(0);
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+
+    LOGOS_ASSERT_TRUE(invoke_node_action(
+                          module,
+                          lifecycle_command(
+                              "bedrock-initialize-rejections",
+                              "initialize",
+                              {{"config", json({{"output", tmp_dir.filePath("node.json")}}).dump()}}
+                          )
+    )
+                          .at("accepted")
+                          .get<bool>());
+    const json status = read_node_status(module);
+    json stale = lifecycle_command("bedrock-stale-start-v1", "start");
+    stale["expected"] = {
+        {"instance_id", status.at("instance_id")},
+        {"epoch", status.at("epoch")},
+        {"sequence", status.at("sequence").get<std::uint64_t>() + 1},
+    };
+    reset_node_changed_events();
+    const json stale_acknowledgement = invoke_node_action(module, stale);
+    LOGOS_ASSERT_FALSE(stale_acknowledgement.at("accepted").get<bool>());
+    LOGOS_ASSERT_EQ(stale_acknowledgement.at("error").at("code").get<std::string>(), std::string("state_mismatch"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("start_lb_node"));
+    const std::vector<json> stale_events = lifecycle_events();
+    LOGOS_ASSERT_EQ(stale_events.size(), static_cast<size_t>(1));
+    LOGOS_ASSERT_EQ(stale_events.at(0).at("outcome").get<std::string>(), std::string("rejected"));
+
+    reset_node_changed_events();
+    const json start = lifecycle_command("bedrock-reused-operation-v1", "start");
+    LOGOS_ASSERT_TRUE(invoke_node_action(module, start).at("accepted").get<bool>());
+    const int starts_after_first_request = t.cFunctionCallCount("start_lb_node");
+    const json duplicate = invoke_node_action(module, start);
+    LOGOS_ASSERT_TRUE(duplicate.at("accepted").get<bool>());
+    LOGOS_ASSERT_TRUE(duplicate.at("duplicate").get<bool>());
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("start_lb_node"), starts_after_first_request);
+    const json conflict = invoke_node_action(module, lifecycle_command("bedrock-reused-operation-v1", "stop"));
+    LOGOS_ASSERT_FALSE(conflict.at("accepted").get<bool>());
+    LOGOS_ASSERT_EQ(conflict.at("error").at("code").get<std::string>(), std::string("operation_id_conflict"));
+
+    LOGOS_ASSERT_TRUE(module.stop().success);
+}
+
+LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_node) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config").returns(0);
+    t.mockCFunction("start_lb_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(invoke_node_action(
+                          module,
+                          lifecycle_command(
+                              "bedrock-initialize-failure",
+                              "initialize",
+                              {{"config", json({{"output", tmp_dir.filePath("node.json")}}).dump()}}
+                          )
+    )
+                          .at("accepted")
+                          .get<bool>());
+    reset_node_changed_events();
+    const json start = invoke_node_action(module, lifecycle_command("bedrock-failing-start-v1", "start"));
+    LOGOS_ASSERT_TRUE(start.at("accepted").get<bool>());
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("failed"));
+    LOGOS_ASSERT_EQ(events.at(1).at("error").at("code").get<std::string>(), std::string("start_failed"));
+    LOGOS_ASSERT_TRUE(events.at(1).dump().find("mock error") == std::string::npos);
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
+
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
+    t.mockCFunction("stop_node").returns(1);
+    LOGOS_ASSERT_FALSE(module.stop().success);
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
 }
 
 // The mock records the paths handed to the FFI (see mock_logos_blockchain.cpp).

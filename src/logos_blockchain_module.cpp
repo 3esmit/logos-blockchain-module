@@ -1,12 +1,14 @@
 #include "logos_blockchain_module.h"
 
 #include <algorithm>
+#include <atomic>
 #include <boost/algorithm/hex.hpp>
 #include <boost/algorithm/string/trim.hpp>
 #include <cctype>
 #include <charconv>
-#include <cstring>
+#include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -57,6 +59,70 @@ namespace result {
 
 namespace {
     constexpr size_t MAX_TIP_PARENT_WALK_BLOCKS = 500;
+    constexpr size_t MAX_NODE_LIFECYCLE_REQUEST_BYTES = 64 * 1024;
+    constexpr size_t MAX_NODE_LIFECYCLE_CONFIG_BYTES = 48 * 1024;
+    constexpr size_t MAX_NODE_LIFECYCLE_DEPLOYMENT_BYTES = 4 * 1024;
+    constexpr size_t MAX_NODE_LIFECYCLE_OPERATION_ID_BYTES = 128;
+    constexpr size_t MAX_COMPLETED_NODE_LIFECYCLE_OPERATIONS = 64;
+    constexpr const char* NODE_LIFECYCLE_SNAPSHOT_SCHEMA = "logos.managed_node_lifecycle.snapshot";
+    constexpr const char* NODE_LIFECYCLE_COMMAND_SCHEMA = "logos.managed_node_lifecycle.command";
+    constexpr const char* NODE_LIFECYCLE_ACK_SCHEMA = "logos.managed_node_lifecycle.ack";
+    constexpr const char* NODE_LIFECYCLE_EVENT_SCHEMA = "logos.managed_node_lifecycle.event";
+    std::atomic<std::uint64_t> node_lifecycle_instance_counter{0};
+
+    std::int64_t nodeLifecycleTimestampMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::system_clock::now().time_since_epoch()
+        )
+            .count();
+    }
+
+    std::string makeNodeLifecycleInstanceId() {
+        return "blockchain-" + std::to_string(nodeLifecycleTimestampMs()) + "-" +
+               std::to_string(node_lifecycle_instance_counter.fetch_add(1) + 1);
+    }
+
+    bool containsEmbeddedNul(const std::string& value) {
+        return value.find('\0') != std::string::npos;
+    }
+
+    bool isValidNodeLifecycleOperationId(const std::string& value) {
+        if (value.empty() || value.size() > MAX_NODE_LIFECYCLE_OPERATION_ID_BYTES) {
+            return false;
+        }
+        return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+            return std::isalnum(character) || character == '.' || character == '_' || character == ':' ||
+                   character == '-';
+        });
+    }
+
+    bool parseLifecycleUnsigned(const json& value, std::uint64_t& output) {
+        if (value.is_number_unsigned()) {
+            output = value.get<std::uint64_t>();
+            return true;
+        }
+        if (value.is_number_integer()) {
+            const auto signed_value = value.get<std::int64_t>();
+            if (signed_value >= 0) {
+                output = static_cast<std::uint64_t>(signed_value);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool isLifecycleVersionOne(const json& value) {
+        std::uint64_t version = 0;
+        return parseLifecycleUnsigned(value, version) && version == 1;
+    }
+
+    json nodeLifecycleError(const std::string& code, const std::string& message, const std::int64_t at_ms) {
+        return {
+            {"code", code},
+            {"message", message},
+            {"at_ms", at_ms},
+        };
+    }
 
     // Rust `File::open` / `deserialize_config_at_path` only accept real filesystem paths. QML often
     // passes `file:///...` URLs; strip to a local path when applicable.
@@ -490,20 +556,674 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
     }
 }
 
-LogosBlockchainModule::LogosBlockchainModule() {
-    node = nullptr;
-}
+LogosBlockchainModule::LogosBlockchainModule()
+    : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {}
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        ++lifecycleGeneration;
+        lifecyclePending = false;
+        activeLifecycleOperationId.clear();
+        activeLifecycleAction.clear();
+        activeLifecycleGeneration = 0;
+    }
+
+    // A module teardown has no consumer to observe a lifecycle event. Preserve
+    // the existing best-effort cleanup without emitting into a dying context.
     s_instance = nullptr;
     if (node) {
-        (void)stop();
+        OperationStatus status = stop_node(node);
+        if (!is_ok(&status)) {
+            (void)operation_status::take_message(status);
+        }
+        node = nullptr;
     }
+}
+
+const char* LogosBlockchainModule::lifecycleStateName(const LifecycleState state) {
+    switch (state) {
+    case LifecycleState::Uninitialized:
+        return "uninitialized";
+    case LifecycleState::Initializing:
+        return "initializing";
+    case LifecycleState::Stopped:
+        return "stopped";
+    case LifecycleState::Starting:
+        return "starting";
+    case LifecycleState::Running:
+        return "running";
+    case LifecycleState::Stopping:
+        return "stopping";
+    case LifecycleState::Destroying:
+        return "destroying";
+    }
+    return "uninitialized";
+}
+
+std::vector<std::string> LogosBlockchainModule::lifecycleActions(const LifecycleState state) {
+    switch (state) {
+    case LifecycleState::Uninitialized:
+        return {"initialize"};
+    case LifecycleState::Stopped:
+        return {"start"};
+    case LifecycleState::Running:
+        return {"stop"};
+    case LifecycleState::Initializing:
+    case LifecycleState::Starting:
+    case LifecycleState::Stopping:
+    case LifecycleState::Destroying:
+        return {};
+    }
+    return {};
+}
+
+const char* LogosBlockchainModule::lifecycleFailureCode(const std::string& action) {
+    if (action == "initialize")
+        return "initialize_failed";
+    if (action == "start")
+        return "start_failed";
+    if (action == "stop")
+        return "stop_failed";
+    return "lifecycle_action_failed";
+}
+
+const char* LogosBlockchainModule::lifecycleFailureMessage(const std::string& action) {
+    if (action == "initialize")
+        return "Bedrock initialization failed.";
+    if (action == "start")
+        return "Bedrock start failed.";
+    if (action == "stop")
+        return "Bedrock stop failed.";
+    return "Bedrock lifecycle action failed.";
+}
+
+std::string LogosBlockchainModule::lifecycleSnapshotLocked() const {
+    json snapshot;
+    snapshot["schema"] = NODE_LIFECYCLE_SNAPSHOT_SCHEMA;
+    snapshot["version"] = 1;
+    snapshot["instance_id"] = lifecycleInstanceId;
+    snapshot["epoch"] = lifecycleEpoch;
+    snapshot["sequence"] = lifecycleSequence;
+    snapshot["scope"] = {{"kind", "bedrock"}};
+    snapshot["state"] = lifecycleStateName(lifecycleState);
+    snapshot["health"] = !lifecycleError.empty()                     ? "degraded"
+                         : lifecycleState == LifecycleState::Running ? "healthy"
+                                                                     : "unknown";
+    snapshot["supported_actions"] = lifecycleActions(lifecycleState);
+    if (lifecyclePending) {
+        snapshot["pending_operation"] = {
+            {"operation_id", activeLifecycleOperationId.empty() ? json(nullptr) : json(activeLifecycleOperationId)},
+            {"action", activeLifecycleAction},
+        };
+    } else {
+        snapshot["pending_operation"] = nullptr;
+    }
+
+    const auto completed = lifecycleOperations.find(lastCompletedLifecycleOperationId);
+    if (completed != lifecycleOperations.end() && completed->second.settled) {
+        snapshot["last_completed_operation"] = {
+            {"operation_id", lastCompletedLifecycleOperationId},
+            {"action", completed->second.action},
+            {"outcome", completed->second.outcome},
+        };
+    } else {
+        snapshot["last_completed_operation"] = nullptr;
+    }
+    snapshot["last_error"] = lifecycleError.empty()
+                                 ? json(nullptr)
+                                 : nodeLifecycleError(lifecycleErrorCode, lifecycleError, lifecycleErrorAtMs);
+    snapshot["updated_at_ms"] = lifecycleUpdatedAtMs;
+    return snapshot.dump();
+}
+
+std::string LogosBlockchainModule::lifecycleEventLocked(
+    const std::string& action,
+    const std::string& operation_id,
+    const std::string& phase,
+    const std::string& outcome,
+    const LifecycleState previous_state,
+    const std::string& error_code
+) const {
+    json event;
+    event["schema"] = NODE_LIFECYCLE_EVENT_SCHEMA;
+    event["version"] = 1;
+    event["instance_id"] = lifecycleInstanceId;
+    event["epoch"] = lifecycleEpoch;
+    event["sequence"] = lifecycleSequence;
+    event["scope"] = {{"kind", "bedrock"}};
+    event["operation_id"] = operation_id.empty() ? json(nullptr) : json(operation_id);
+    event["action"] = action;
+    event["phase"] = phase;
+    event["outcome"] = outcome;
+    event["previous_state"] = lifecycleStateName(previous_state);
+    event["status"] = json::parse(lifecycleSnapshotLocked());
+    event["error"] = error_code.empty()
+                         ? json(nullptr)
+                         : nodeLifecycleError(error_code, lifecycleFailureMessage(action), nodeLifecycleTimestampMs());
+    event["emitted_at_ms"] = nodeLifecycleTimestampMs();
+    return event.dump();
+}
+
+void LogosBlockchainModule::emitLifecycleEvents(const std::vector<std::string>& events) {
+    for (const std::string& event : events) {
+        nodeChanged(event);
+    }
+}
+
+void LogosBlockchainModule::rememberCompletedLifecycleOperationLocked(const std::string& operation_id) {
+    if (operation_id.empty())
+        return;
+    lastCompletedLifecycleOperationId = operation_id;
+    completedLifecycleOperationIds.push_back(operation_id);
+    while (completedLifecycleOperationIds.size() > MAX_COMPLETED_NODE_LIFECYCLE_OPERATIONS) {
+        const std::string expired = completedLifecycleOperationIds.front();
+        completedLifecycleOperationIds.pop_front();
+        const auto found = lifecycleOperations.find(expired);
+        if (found != lifecycleOperations.end() && found->second.settled &&
+            expired != lastCompletedLifecycleOperationId) {
+            lifecycleOperations.erase(found);
+        }
+    }
+}
+
+LogosBlockchainModule::LifecycleDispatch LogosBlockchainModule::beginLifecycleAction(
+    const std::string& action,
+    const std::string& operation_id,
+    const std::string& request_fingerprint,
+    const bool has_expected_snapshot,
+    const std::string& expected_instance_id,
+    const std::uint64_t expected_epoch,
+    const std::uint64_t expected_sequence,
+    const bool strict_action
+) {
+    LifecycleDispatch dispatch;
+    dispatch.action = action;
+    dispatch.operationId = operation_id;
+
+    std::lock_guard<std::mutex> lock(lifecycleMutex);
+    const auto acknowledgement = [&](const bool accepted,
+                                     const bool duplicate,
+                                     const std::string& error_code,
+                                     const std::string& error_message) {
+        json result;
+        result["schema"] = NODE_LIFECYCLE_ACK_SCHEMA;
+        result["version"] = 1;
+        result["operation_id"] = operation_id.empty() ? json(nullptr) : json(operation_id);
+        result["accepted"] = accepted;
+        result["duplicate"] = duplicate;
+        result["instance_id"] = lifecycleInstanceId;
+        result["epoch"] = lifecycleEpoch;
+        result["sequence"] = lifecycleSequence;
+        result["state"] = lifecycleStateName(lifecycleState);
+        result["error"] = error_code.empty()
+                              ? json(nullptr)
+                              : nodeLifecycleError(error_code, error_message, nodeLifecycleTimestampMs());
+        return result.dump();
+    };
+    const auto settle_without_dispatch = [&](const LifecycleDispatchDisposition disposition,
+                                             const bool accepted,
+                                             const std::string& outcome,
+                                             const std::string& error_code,
+                                             const std::string& error_message) {
+        LifecycleOperation operation;
+        operation.action = action;
+        operation.requestFingerprint = request_fingerprint;
+        operation.previousState = lifecycleState;
+        operation.settled = true;
+        operation.outcome = outcome;
+        const auto inserted = lifecycleOperations.emplace(operation_id, std::move(operation));
+        if (accepted) {
+            ++lifecycleSequence;
+            lifecycleUpdatedAtMs = nodeLifecycleTimestampMs();
+            dispatch.events.push_back(
+                lifecycleEventLocked(action, operation_id, "accepted", "accepted", lifecycleState)
+            );
+        }
+        ++lifecycleSequence;
+        lifecycleUpdatedAtMs = nodeLifecycleTimestampMs();
+        dispatch.disposition = disposition;
+        dispatch.events.push_back(lifecycleEventLocked(
+            action, operation_id, "settled", outcome, lifecycleState, accepted ? std::string() : error_code
+        ));
+        dispatch.acknowledgement = acknowledgement(
+            accepted, false, accepted ? std::string() : error_code, accepted ? std::string() : error_message
+        );
+        inserted.first->second.acknowledgement = dispatch.acknowledgement;
+        rememberCompletedLifecycleOperationLocked(operation_id);
+    };
+
+    if (strict_action) {
+        const auto existing = lifecycleOperations.find(operation_id);
+        if (existing != lifecycleOperations.end()) {
+            if (existing->second.requestFingerprint != request_fingerprint) {
+                dispatch.disposition = LifecycleDispatchDisposition::Rejected;
+                dispatch.acknowledgement = acknowledgement(
+                    false, false, "operation_id_conflict", "operation_id was already used for a different request."
+                );
+                return dispatch;
+            }
+            dispatch.disposition = LifecycleDispatchDisposition::Duplicate;
+            json duplicate = json::parse(existing->second.acknowledgement);
+            duplicate["duplicate"] = true;
+            dispatch.acknowledgement = duplicate.dump();
+            return dispatch;
+        }
+    }
+    if (lifecyclePending) {
+        if (strict_action) {
+            settle_without_dispatch(
+                LifecycleDispatchDisposition::Rejected,
+                false,
+                "rejected",
+                "operation_in_progress",
+                "A lifecycle operation is already in progress."
+            );
+        }
+        return dispatch;
+    }
+    if (strict_action && has_expected_snapshot &&
+        (expected_instance_id != lifecycleInstanceId || expected_epoch != lifecycleEpoch ||
+         expected_sequence != lifecycleSequence)) {
+        settle_without_dispatch(
+            LifecycleDispatchDisposition::Rejected,
+            false,
+            "rejected",
+            "state_mismatch",
+            "The lifecycle snapshot is stale."
+        );
+        return dispatch;
+    }
+    if (strict_action) {
+        if (action == "initialize") {
+            if (lifecycleState != LifecycleState::Uninitialized) {
+                settle_without_dispatch(
+                    LifecycleDispatchDisposition::Rejected,
+                    false,
+                    "rejected",
+                    "invalid_state",
+                    "Bedrock is already initialized."
+                );
+                return dispatch;
+            }
+        } else if (action == "start") {
+            if (lifecycleState == LifecycleState::Running) {
+                settle_without_dispatch(LifecycleDispatchDisposition::Noop, true, "no_op", {}, {});
+                return dispatch;
+            }
+            if (lifecycleState != LifecycleState::Stopped || lifecycleConfigPath.empty()) {
+                settle_without_dispatch(
+                    LifecycleDispatchDisposition::Rejected,
+                    false,
+                    "rejected",
+                    "invalid_state",
+                    "Bedrock must be initialized before it can start."
+                );
+                return dispatch;
+            }
+        } else if (action == "stop") {
+            if (lifecycleState == LifecycleState::Stopped) {
+                settle_without_dispatch(LifecycleDispatchDisposition::Noop, true, "no_op", {}, {});
+                return dispatch;
+            }
+            if (lifecycleState != LifecycleState::Running) {
+                settle_without_dispatch(
+                    LifecycleDispatchDisposition::Rejected,
+                    false,
+                    "rejected",
+                    "invalid_state",
+                    "Bedrock is not in a stoppable state."
+                );
+                return dispatch;
+            }
+        }
+    }
+
+    dispatch.previousState = lifecycleState;
+    dispatch.generation = ++lifecycleGeneration;
+    lifecycleState = action == "initialize" ? LifecycleState::Initializing
+                     : action == "start"    ? LifecycleState::Starting
+                                            : LifecycleState::Stopping;
+    lifecycleError.clear();
+    lifecycleErrorCode.clear();
+    lifecycleErrorAtMs = 0;
+    lifecyclePending = true;
+    activeLifecycleOperationId = strict_action ? operation_id : std::string();
+    activeLifecycleAction = action;
+    activeLifecycleGeneration = dispatch.generation;
+    ++lifecycleSequence;
+    lifecycleUpdatedAtMs = nodeLifecycleTimestampMs();
+    dispatch.disposition = LifecycleDispatchDisposition::Dispatch;
+    if (strict_action) {
+        LifecycleOperation operation;
+        operation.action = action;
+        operation.requestFingerprint = request_fingerprint;
+        operation.previousState = dispatch.previousState;
+        const auto inserted = lifecycleOperations.emplace(operation_id, std::move(operation));
+        dispatch.events.push_back(
+            lifecycleEventLocked(action, operation_id, "accepted", "accepted", dispatch.previousState)
+        );
+        dispatch.acknowledgement = acknowledgement(true, false, {}, {});
+        inserted.first->second.acknowledgement = dispatch.acknowledgement;
+    } else {
+        dispatch.events.push_back(lifecycleEventLocked(action, {}, "accepted", "accepted", dispatch.previousState));
+    }
+    return dispatch;
+}
+
+void LogosBlockchainModule::settleLifecycleAction(
+    const LifecycleDispatch& dispatch,
+    const bool success,
+    const LifecycleState success_state,
+    const LifecycleState failure_state,
+    const std::string& error_code
+) {
+    std::string event;
+    {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        if (!lifecyclePending || activeLifecycleGeneration != dispatch.generation ||
+            activeLifecycleAction != dispatch.action) {
+            return;
+        }
+        lifecycleState = success ? success_state : failure_state;
+        lifecycleErrorCode = success              ? std::string()
+                             : error_code.empty() ? lifecycleFailureCode(dispatch.action)
+                                                  : error_code;
+        lifecycleError = success ? std::string() : lifecycleFailureMessage(dispatch.action);
+        lifecycleErrorAtMs = success ? 0 : nodeLifecycleTimestampMs();
+        if (success && dispatch.action == "initialize") {
+            ++lifecycleEpoch;
+        }
+        if (!dispatch.operationId.empty()) {
+            const auto operation = lifecycleOperations.find(dispatch.operationId);
+            if (operation != lifecycleOperations.end()) {
+                operation->second.settled = true;
+                operation->second.outcome = success ? "succeeded" : "failed";
+                rememberCompletedLifecycleOperationLocked(dispatch.operationId);
+            }
+        }
+        lifecyclePending = false;
+        activeLifecycleOperationId.clear();
+        activeLifecycleAction.clear();
+        activeLifecycleGeneration = 0;
+        ++lifecycleSequence;
+        lifecycleUpdatedAtMs = nodeLifecycleTimestampMs();
+        event = lifecycleEventLocked(
+            dispatch.action,
+            dispatch.operationId,
+            "settled",
+            success ? "succeeded" : "failed",
+            dispatch.previousState,
+            success ? std::string() : lifecycleErrorCode
+        );
+    }
+    nodeChanged(event);
+}
+
+StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_path, const std::string& deployment) {
+    if (node) {
+        return result::err("The node is already running.");
+    }
+
+    std::string effective_config_path = config_path;
+    if (effective_config_path.empty()) {
+        const char* env = std::getenv("LB_CONFIG_PATH");
+        if (env && *env) {
+            effective_config_path = env;
+        } else {
+            return result::err("Config path was not specified and LB_CONFIG_PATH is not set.");
+        }
+    }
+
+    effective_config_path = localPathFromFileUrl(effective_config_path);
+    const std::string deployment_path = localPathFromFileUrl(deployment);
+    const char* config_path_ptr = effective_config_path.empty() ? nullptr : effective_config_path.c_str();
+    const char* deployment_ptr = deployment_path.empty() ? nullptr : deployment_path.c_str();
+
+    auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    if (!value) {
+        return result::err("Could not subscribe to block events: the node is not running.");
+    }
+
+    node = value;
+    s_instance = this;
+    OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
+    if (is_ok(&subscribe_status)) {
+        return result::ok();
+    }
+
+    const std::string message = operation_status::take_message(subscribe_status);
+    s_instance = nullptr;
+    OperationStatus stop_status = stop_node(node);
+    if (!is_ok(&stop_status)) {
+        (void)operation_status::take_message(stop_status);
+    }
+    node = nullptr;
+    return result::err(
+        message.empty() ? "Could not subscribe to block events." : "Could not subscribe to block events: " + message
+    );
+}
+
+StdLogosResult LogosBlockchainModule::stopPrepared() {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    OperationStatus status = stop_node(node);
+    if (!is_ok(&status)) {
+        return result::err(operation_status::take_message(status));
+    }
+    s_instance = nullptr;
+    node = nullptr;
+    return result::ok();
 }
 
 // ---- Node ----
 
-// Lifecycle
+StdLogosResult LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
+    const LifecycleDispatch dispatch = beginLifecycleAction("start", {}, {}, false, {}, 0, 0, false);
+    if (dispatch.disposition != LifecycleDispatchDisposition::Dispatch) {
+        return result::err("A lifecycle operation is already in progress.");
+    }
+    emitLifecycleEvents(dispatch.events);
+    const StdLogosResult started = startPrepared(config_path, deployment);
+    settleLifecycleAction(dispatch, started.success, LifecycleState::Running, dispatch.previousState);
+    return started;
+}
+
+StdLogosResult LogosBlockchainModule::stop() {
+    const LifecycleDispatch dispatch = beginLifecycleAction("stop", {}, {}, false, {}, 0, 0, false);
+    if (dispatch.disposition != LifecycleDispatchDisposition::Dispatch) {
+        return result::err("A lifecycle operation is already in progress.");
+    }
+    emitLifecycleEvents(dispatch.events);
+    const StdLogosResult stopped = stopPrepared();
+    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, dispatch.previousState);
+    return stopped;
+}
+
+std::string LogosBlockchainModule::nodeStatus() {
+    std::lock_guard<std::mutex> lock(lifecycleMutex);
+    return lifecycleSnapshotLocked();
+}
+
+std::string LogosBlockchainModule::nodeAction(const std::string& request) {
+    const auto rejected = [this](const std::string& code, const std::string& message) {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        json acknowledgement;
+        acknowledgement["schema"] = NODE_LIFECYCLE_ACK_SCHEMA;
+        acknowledgement["version"] = 1;
+        acknowledgement["operation_id"] = nullptr;
+        acknowledgement["accepted"] = false;
+        acknowledgement["duplicate"] = false;
+        acknowledgement["instance_id"] = lifecycleInstanceId;
+        acknowledgement["epoch"] = lifecycleEpoch;
+        acknowledgement["sequence"] = lifecycleSequence;
+        acknowledgement["state"] = lifecycleStateName(lifecycleState);
+        acknowledgement["error"] = nodeLifecycleError(code, message, nodeLifecycleTimestampMs());
+        return acknowledgement.dump();
+    };
+
+    if (request.size() > MAX_NODE_LIFECYCLE_REQUEST_BYTES) {
+        return rejected("request_too_large", "Lifecycle request exceeds the supported size.");
+    }
+    json input;
+    try {
+        input = json::parse(request);
+    } catch (const json::exception&) {
+        return rejected("invalid_request", "Lifecycle request must be a JSON object.");
+    }
+    if (!input.is_object()) {
+        return rejected("invalid_request", "Lifecycle request must be a JSON object.");
+    }
+    for (const auto& item : input.items()) {
+        const std::string& key = item.key();
+        if (key != "schema" && key != "version" && key != "operation_id" && key != "action" && key != "expected" &&
+            key != "parameters") {
+            return rejected("invalid_request", "Lifecycle request contains an unsupported field.");
+        }
+    }
+    const auto schema = input.find("schema");
+    if (schema == input.end() || !schema->is_string() || schema->get<std::string>() != NODE_LIFECYCLE_COMMAND_SCHEMA) {
+        return rejected("invalid_request", "Unsupported lifecycle request schema.");
+    }
+    const auto version = input.find("version");
+    if (version == input.end() || !isLifecycleVersionOne(*version)) {
+        return rejected("invalid_request", "Unsupported lifecycle request version.");
+    }
+    const auto operation_id = input.find("operation_id");
+    if (operation_id == input.end() || !operation_id->is_string()) {
+        return rejected("invalid_request", "Lifecycle request requires an operation_id.");
+    }
+    const std::string operation = operation_id->get<std::string>();
+    if (!isValidNodeLifecycleOperationId(operation)) {
+        return rejected("invalid_request", "Lifecycle operation_id is invalid.");
+    }
+    const auto action_value = input.find("action");
+    if (action_value == input.end() || !action_value->is_string()) {
+        return rejected("invalid_request", "Lifecycle request requires an action.");
+    }
+    const std::string action = action_value->get<std::string>();
+    if (action != "initialize" && action != "start" && action != "stop") {
+        return rejected("invalid_request", "Unsupported lifecycle action.");
+    }
+
+    bool has_expected_snapshot = false;
+    std::string expected_instance_id;
+    std::uint64_t expected_epoch = 0;
+    std::uint64_t expected_sequence = 0;
+    const auto expected = input.find("expected");
+    if (expected != input.end()) {
+        if (!expected->is_object() || expected->size() != 3 || !expected->contains("instance_id") ||
+            !expected->contains("epoch") || !expected->contains("sequence") ||
+            !expected->at("instance_id").is_string() ||
+            !parseLifecycleUnsigned(expected->at("epoch"), expected_epoch) ||
+            !parseLifecycleUnsigned(expected->at("sequence"), expected_sequence)) {
+            return rejected(
+                "invalid_request", "Lifecycle expected snapshot must contain instance_id, epoch, and sequence."
+            );
+        }
+        expected_instance_id = expected->at("instance_id").get<std::string>();
+        has_expected_snapshot = true;
+    }
+
+    json parameters = json::object();
+    const auto parameters_value = input.find("parameters");
+    if (parameters_value != input.end()) {
+        if (!parameters_value->is_object()) {
+            return rejected("invalid_request", "Lifecycle parameters must be an object.");
+        }
+        parameters = *parameters_value;
+    }
+
+    std::string initialization_config;
+    std::string deployment;
+    if (action == "initialize") {
+        const auto config = parameters.find("config");
+        if (config == parameters.end() || !config->is_string() || parameters.size() != 1) {
+            return rejected("invalid_request", "Initialize requires only parameters.config.");
+        }
+        initialization_config = config->get<std::string>();
+        if (initialization_config.empty() || initialization_config.size() > MAX_NODE_LIFECYCLE_CONFIG_BYTES ||
+            containsEmbeddedNul(initialization_config)) {
+            return rejected("invalid_request", "Initialize config is invalid or exceeds the supported size.");
+        }
+        try {
+            const json config_object = json::parse(initialization_config);
+            if (!config_object.is_object()) {
+                return rejected("invalid_request", "Initialize config must be a JSON object.");
+            }
+            const auto output = config_object.find("output");
+            if (output == config_object.end() || !output->is_string() || output->get<std::string>().empty()) {
+                return rejected("invalid_request", "Initialize config requires a non-empty output path.");
+            }
+        } catch (const json::exception&) {
+            return rejected("invalid_request", "Initialize config must be a JSON object.");
+        }
+    } else if (action == "start") {
+        if (parameters.empty()) {
+            deployment.clear();
+        } else if (parameters.size() == 1 && parameters.contains("deployment") &&
+                   parameters.at("deployment").is_string()) {
+            deployment = parameters.at("deployment").get<std::string>();
+            if (deployment.size() > MAX_NODE_LIFECYCLE_DEPLOYMENT_BYTES || containsEmbeddedNul(deployment)) {
+                return rejected("invalid_request", "Start deployment is invalid or exceeds the supported size.");
+            }
+        } else {
+            return rejected("invalid_request", "Start accepts only optional parameters.deployment.");
+        }
+    } else if (!parameters.empty()) {
+        return rejected("invalid_request", "Stop does not accept parameters.");
+    }
+
+    const LifecycleDispatch dispatch = beginLifecycleAction(
+        action,
+        operation,
+        input.dump(),
+        has_expected_snapshot,
+        expected_instance_id,
+        expected_epoch,
+        expected_sequence,
+        true
+    );
+    emitLifecycleEvents(dispatch.events);
+    if (dispatch.disposition != LifecycleDispatchDisposition::Dispatch) {
+        return dispatch.acknowledgement;
+    }
+
+    if (action == "initialize") {
+        StdLogosResult initialized = generate_user_config(initialization_config);
+        std::string generated_config_path;
+        if (initialized.success) {
+            generated_config_path = initialized.value.get<std::string>();
+            if (generated_config_path.empty()) {
+                initialized = result::err("Generated configuration path is unavailable.");
+            }
+        }
+        if (initialized.success) {
+            std::lock_guard<std::mutex> lock(lifecycleMutex);
+            if (activeLifecycleGeneration == dispatch.generation) {
+                lifecycleConfigPath = generated_config_path;
+            }
+        }
+        settleLifecycleAction(dispatch, initialized.success, LifecycleState::Stopped, LifecycleState::Uninitialized);
+    } else if (action == "start") {
+        std::string config_path;
+        {
+            std::lock_guard<std::mutex> lock(lifecycleMutex);
+            config_path = lifecycleConfigPath;
+        }
+        const StdLogosResult started = startPrepared(config_path, deployment);
+        settleLifecycleAction(dispatch, started.success, LifecycleState::Running, LifecycleState::Stopped);
+    } else {
+        const StdLogosResult stopped = stopPrepared();
+        settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Running);
+    }
+    return dispatch.acknowledgement;
+}
 
 StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& json_args) const {
     json parsed_args;
@@ -600,64 +1320,6 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
     }
 
     return result::ok(resolved_output);
-}
-
-StdLogosResult LogosBlockchainModule::start(const std::string& config_path, const std::string& deployment) {
-    if (node) {
-        fprintf(stderr, "Could not execute the operation: The node is already running.\n");
-        return result::err("The node is already running.");
-    }
-
-    std::string effective_config_path = config_path;
-
-    if (effective_config_path.empty()) {
-        const char* env = std::getenv("LB_CONFIG_PATH");
-        if (env && *env) {
-            effective_config_path = env;
-            fprintf(stderr, "Using config from LB_CONFIG_PATH: %s\n", effective_config_path.c_str());
-        } else {
-            fprintf(stderr, "Config path was not specified and LB_CONFIG_PATH is not set.\n");
-            return result::err("Config path was not specified and LB_CONFIG_PATH is not set.");
-        }
-    }
-
-    effective_config_path = localPathFromFileUrl(effective_config_path);
-    const std::string deployment_path = localPathFromFileUrl(deployment);
-
-    const char* config_path_ptr = effective_config_path.empty() ? nullptr : effective_config_path.c_str();
-    const char* deployment_ptr = deployment_path.empty() ? nullptr : deployment_path.c_str();
-
-    auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
-    if (!is_ok(&error)) {
-        return result::err(operation_status::take_message(error));
-    }
-
-    node = value;
-
-    if (!node) {
-        return result::err("Could not subscribe to block events: the node is not running.");
-    }
-
-    s_instance = this;
-    OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
-    return result::from_operation_status(subscribe_status);
-}
-
-StdLogosResult LogosBlockchainModule::stop() {
-    if (!node) {
-        fprintf(stderr, "Could not execute the operation: The node is not running.\n");
-        return result::err("The node is not running.");
-    }
-
-    s_instance = nullptr;
-
-    OperationStatus status = stop_node(node);
-    if (!is_ok(&status)) {
-        fprintf(stderr, "Could not stop the node: %s\n", operation_status::take_message(status).c_str());
-    }
-
-    node = nullptr;
-    return result::ok();
 }
 
 // Config management
@@ -1312,16 +1974,12 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     std::string current_id = tip_id;
     for (size_t walked = 0; walked < MAX_TIP_PARENT_WALK_BLOCKS; ++walked) {
         if (!visited.insert(current_id).second) {
-            return result::err(
-                "get_blocks encountered a repeated parent block id during live-tip traversal."
-            );
+            return result::err("get_blocks encountered a repeated parent block id during live-tip traversal.");
         }
 
         StdLogosResult block_result = get_block(current_id);
         if (!block_result.success) {
-            return result::err(
-                "get_blocks could not read live block `" + current_id + "`: " + block_result.error
-            );
+            return result::err("get_blocks could not read live block `" + current_id + "`: " + block_result.error);
         }
 
         json block;
@@ -1357,9 +2015,7 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     }
 
     if (!reached_lower_bound) {
-        return result::err(
-            "get_blocks reached the live-tip traversal limit before the requested lower slot."
-        );
+        return result::err("get_blocks reached the live-tip traversal limit before the requested lower slot.");
     }
 
     std::reverse(reverse_blocks.begin(), reverse_blocks.end());
@@ -1429,8 +2085,8 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     if (abi_version != EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION) {
         return result::err(
             "Incompatible CryptarchiaInfo C ABI: expected version " +
-            std::to_string(EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION) + ", got " +
-            std::to_string(abi_version) + ". Use a matching logos-blockchain C library."
+            std::to_string(EXPECTED_CRYPTARCHIA_INFO_ABI_VERSION) + ", got " + std::to_string(abi_version) +
+            ". Use a matching logos-blockchain C library."
         );
     }
 
@@ -1449,8 +2105,7 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
     obj["lib_slot"] = static_cast<int64_t>(value->lib_slot);
-    obj["genesis_id"] =
-        bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), sizeof(value->genesis_id));
+    obj["genesis_id"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->genesis_id), sizeof(value->genesis_id));
     switch (value->mode) {
     case State::Online:
         obj["mode"] = "Online";

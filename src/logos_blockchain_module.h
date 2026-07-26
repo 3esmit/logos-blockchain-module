@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstdint>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <logos_module_context.h>
@@ -24,6 +28,20 @@ public:
     // Lifecycle
     [[nodiscard]] StdLogosResult start(const std::string& config_path, const std::string& deployment);
     [[nodiscard]] StdLogosResult stop();
+
+    /// Return the versioned, bounded Bedrock node lifecycle snapshot.
+    ///
+    /// This is callable before initialization. It intentionally does not expose
+    /// configuration paths, configuration contents, or raw backend errors.
+    [[nodiscard]] std::string nodeStatus();
+
+    /// Accept a versioned, caller-correlated node lifecycle command.
+    ///
+    /// The request uses the shared managed-node V1 JSON envelope. It returns a
+    /// small acknowledgement; accepted and settled observations are emitted via
+    /// nodeChanged(). Existing start(), stop(), and configuration APIs remain
+    /// compatible and independent.
+    [[nodiscard]] std::string nodeAction(const std::string& request);
 
     // Config management
     // Not static: when the JSON args set "use_persistence_paths": true it routes
@@ -161,6 +179,9 @@ public:
 // Clang-format only handles public/private/protected, so it miss-indents this section.
 // Guard kept until https://github.com/llvm/llvm-project/issues/64763 lands.
 logos_events:
+    /// Emits ordered versioned lifecycle observations for nodeStatus/nodeAction.
+    void nodeChanged(const std::string& event);
+
     // Fired by on_new_block_callback when the Rust node delivers a new block.
     // blockJson is a JSON envelope. Valid payloads have an object-valued
     // block: {"block": <block object>}; malformed payloads preserve the raw
@@ -171,7 +192,99 @@ logos_events:
     // clang-format on
 
 private:
+    enum class LifecycleState : std::uint8_t {
+        Uninitialized,
+        Initializing,
+        Stopped,
+        Starting,
+        Running,
+        Stopping,
+        Destroying,
+    };
+
+    enum class LifecycleDispatchDisposition : std::uint8_t {
+        Dispatch,
+        Duplicate,
+        Rejected,
+        Noop,
+    };
+
+    struct LifecycleOperation {
+        std::string action;
+        std::string requestFingerprint;
+        std::string acknowledgement;
+        LifecycleState previousState = LifecycleState::Uninitialized;
+        bool settled = false;
+        std::string outcome;
+    };
+
+    struct LifecycleDispatch {
+        LifecycleDispatchDisposition disposition = LifecycleDispatchDisposition::Rejected;
+        std::string action;
+        std::string operationId;
+        LifecycleState previousState = LifecycleState::Uninitialized;
+        std::uint64_t generation = 0;
+        std::string acknowledgement;
+        std::vector<std::string> events;
+    };
+
     LogosBlockchainNode* node = nullptr;
+
+    mutable std::mutex lifecycleMutex;
+    LifecycleState lifecycleState = LifecycleState::Uninitialized;
+    std::uint64_t lifecycleGeneration = 0;
+    std::string lifecycleInstanceId;
+    std::uint64_t lifecycleEpoch = 0;
+    std::uint64_t lifecycleSequence = 0;
+    std::int64_t lifecycleUpdatedAtMs = 0;
+    std::int64_t lifecycleErrorAtMs = 0;
+    std::string lifecycleErrorCode;
+    std::string lifecycleError;
+    bool lifecyclePending = false;
+    std::string activeLifecycleOperationId;
+    std::string activeLifecycleAction;
+    std::uint64_t activeLifecycleGeneration = 0;
+    std::string lastCompletedLifecycleOperationId;
+    std::string lifecycleConfigPath;
+    std::unordered_map<std::string, LifecycleOperation> lifecycleOperations;
+    std::deque<std::string> completedLifecycleOperationIds;
+
+    LifecycleDispatch beginLifecycleAction(
+        const std::string& action,
+        const std::string& operation_id,
+        const std::string& request_fingerprint,
+        bool has_expected_snapshot,
+        const std::string& expected_instance_id,
+        std::uint64_t expected_epoch,
+        std::uint64_t expected_sequence,
+        bool strict_action
+    );
+    void settleLifecycleAction(
+        const LifecycleDispatch& dispatch,
+        bool success,
+        LifecycleState success_state,
+        LifecycleState failure_state,
+        const std::string& error_code = {}
+    );
+    [[nodiscard]] std::string lifecycleSnapshotLocked() const;
+    [[nodiscard]] std::string lifecycleEventLocked(
+        const std::string& action,
+        const std::string& operation_id,
+        const std::string& phase,
+        const std::string& outcome,
+        LifecycleState previous_state,
+        const std::string& error_code = {}
+    ) const;
+    void emitLifecycleEvents(const std::vector<std::string>& events);
+    void rememberCompletedLifecycleOperationLocked(const std::string& operation_id);
+
+    [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
+    [[nodiscard]] StdLogosResult stopPrepared();
+
+    [[nodiscard]] static const char* lifecycleStateName(LifecycleState state);
+    [[nodiscard]] static std::vector<std::string> lifecycleActions(LifecycleState state);
+    [[nodiscard]] static const char* lifecycleFailureCode(const std::string& action);
+    [[nodiscard]] static const char* lifecycleFailureMessage(const std::string& action);
 
     // Static instance for C callback (C API doesn't support user data)
     static LogosBlockchainModule* s_instance;
