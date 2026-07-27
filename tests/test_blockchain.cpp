@@ -234,6 +234,27 @@ LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
     LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
 }
 
+LOGOS_TEST(node_action_restarts_a_legacy_started_node) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("stop_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
+
+    const json stopped = invoke_node_action(module, lifecycle_command("bedrock-stop-legacy-v1", "stop"));
+    LOGOS_ASSERT_TRUE(stopped.at("accepted").get<bool>());
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
+
+    const json restarted = invoke_node_action(module, lifecycle_command("bedrock-restart-legacy-v1", "start"));
+    LOGOS_ASSERT_TRUE(restarted.at("accepted").get<bool>());
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("start_lb_node"), 2);
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
+}
+
 LOGOS_TEST(node_action_rejects_stale_and_reused_operation_ids_without_dispatch) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmp_dir;

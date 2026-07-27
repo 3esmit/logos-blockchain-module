@@ -992,6 +992,8 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     s_instance = this;
     OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (is_ok(&subscribe_status)) {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        lifecycleConfigPath = effective_config_path;
         return result::ok();
     }
 
