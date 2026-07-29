@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_set>
@@ -68,6 +70,9 @@ namespace {
     constexpr const char* NODE_LIFECYCLE_COMMAND_SCHEMA = "logos.managed_node_lifecycle.command";
     constexpr const char* NODE_LIFECYCLE_ACK_SCHEMA = "logos.managed_node_lifecycle.ack";
     constexpr const char* NODE_LIFECYCLE_EVENT_SCHEMA = "logos.managed_node_lifecycle.event";
+    constexpr const char* PERSISTED_LIFECYCLE_STATE_FILE = ".logos-blockchain-lifecycle-v1.json";
+    constexpr const char* PERSISTED_LIFECYCLE_STATE_SCHEMA = "logos.blockchain.lifecycle_config";
+    constexpr size_t MAX_PERSISTED_LIFECYCLE_STATE_BYTES = 4 * 1024;
     std::atomic<std::uint64_t> node_lifecycle_instance_counter{0};
 
     std::int64_t nodeLifecycleTimestampMs() {
@@ -132,6 +137,38 @@ namespace {
         if (s.size() >= 5 && s.substr(0, 5) == "file:")
             return s.substr(5);
         return s;
+    }
+
+    std::string resolvedConfigOutputPath(
+        const json& config,
+        const bool use_persistence_paths,
+        const std::string& persistence_path
+    ) {
+        const auto output = config.find("output");
+        const bool has_output = output != config.end() && output->is_string() && !output->get<std::string>().empty();
+        if (!use_persistence_paths || persistence_path.empty()) {
+            return has_output ? output->get<std::string>() : std::string();
+        }
+
+        fs::path output_relative = "user_config.yaml";
+        if (has_output) {
+            const fs::path given(localPathFromFileUrl(output->get<std::string>()));
+            const fs::path relative = given.relative_path();
+            output_relative = relative.empty() ? given.filename() : relative;
+            if (output_relative.empty())
+                output_relative = "user_config.yaml";
+        }
+        return (fs::path(persistence_path) / output_relative).lexically_normal().string();
+    }
+
+    std::string existingRegularFilePath(const std::string& candidate) {
+        if (candidate.empty() || containsEmbeddedNul(candidate))
+            return {};
+        const fs::path path(localPathFromFileUrl(candidate));
+        std::error_code error;
+        if (!fs::is_regular_file(path, error) || error)
+            return {};
+        return path.lexically_normal().string();
     }
 
     // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
@@ -727,6 +764,121 @@ void LogosBlockchainModule::rememberCompletedLifecycleOperationLocked(const std:
     }
 }
 
+std::string LogosBlockchainModule::lifecycleInitializationConfigPath(const std::string& config) const {
+    try {
+        const json parsed = json::parse(config);
+        if (!parsed.is_object())
+            return {};
+        const auto use_persistence_paths = parsed.find("use_persistence_paths");
+        const bool use_persistence = use_persistence_paths != parsed.end() && use_persistence_paths->is_boolean() &&
+                                     use_persistence_paths->get<bool>();
+        return resolvedConfigOutputPath(parsed, use_persistence, instancePersistencePath());
+    } catch (const json::exception&) {
+        return {};
+    }
+}
+
+std::string LogosBlockchainModule::restoredLifecycleConfigPath() const {
+    const std::string& persistence_path = instancePersistencePath();
+    if (persistence_path.empty())
+        return {};
+
+    const fs::path state_path = fs::path(persistence_path) / PERSISTED_LIFECYCLE_STATE_FILE;
+    std::error_code error;
+    if (!fs::is_regular_file(state_path, error) || error)
+        return {};
+    error.clear();
+    const auto size = fs::file_size(state_path, error);
+    if (error || size > MAX_PERSISTED_LIFECYCLE_STATE_BYTES)
+        return {};
+
+    std::ifstream input(state_path, std::ios::binary);
+    if (!input)
+        return {};
+    const std::string serialized((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (serialized.empty() || serialized.size() > MAX_PERSISTED_LIFECYCLE_STATE_BYTES)
+        return {};
+
+    try {
+        const json state = json::parse(serialized);
+        if (!state.is_object() || state.size() != 3)
+            return {};
+        const auto schema = state.find("schema");
+        const auto version = state.find("version");
+        const auto config_path = state.find("config_path");
+        if (schema == state.end() || !schema->is_string() ||
+            schema->get<std::string>() != PERSISTED_LIFECYCLE_STATE_SCHEMA || version == state.end() ||
+            !isLifecycleVersionOne(*version) || config_path == state.end() || !config_path->is_string()) {
+            return {};
+        }
+        return existingRegularFilePath(config_path->get<std::string>());
+    } catch (const json::exception&) {
+        return {};
+    }
+}
+
+void LogosBlockchainModule::persistLifecycleConfigLocked() {
+    const std::string& persistence_path = instancePersistencePath();
+    const std::string config_path = existingRegularFilePath(lifecycleConfigPath);
+    if (persistence_path.empty() || config_path.empty())
+        return;
+
+    const fs::path base(persistence_path);
+    std::error_code error;
+    fs::create_directories(base, error);
+    if (error)
+        return;
+
+    const fs::path state_path = base / PERSISTED_LIFECYCLE_STATE_FILE;
+    const fs::path temporary_path = base / (std::string(PERSISTED_LIFECYCLE_STATE_FILE) + ".tmp");
+    // Keep the config reference private to the module persistence directory;
+    // lifecycle snapshots and events intentionally never expose it.
+    const json state = {
+        {"schema", PERSISTED_LIFECYCLE_STATE_SCHEMA},
+        {"version", 1},
+        {"config_path", config_path},
+    };
+    const std::string serialized = state.dump();
+    if (serialized.size() > MAX_PERSISTED_LIFECYCLE_STATE_BYTES)
+        return;
+    {
+        std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
+        if (!output)
+            return;
+        output << serialized << '\n';
+        output.close();
+        if (!output) {
+            fs::remove(temporary_path, error);
+            return;
+        }
+    }
+
+    error.clear();
+    fs::rename(temporary_path, state_path, error);
+    if (error) {
+        fs::remove(temporary_path, error);
+    }
+}
+
+void LogosBlockchainModule::onContextReady() {
+    std::lock_guard<std::mutex> lock(lifecycleMutex);
+    if (lifecycleState != LifecycleState::Uninitialized || lifecyclePending || node || !lifecycleConfigPath.empty())
+        return;
+
+    const std::string config_path = restoredLifecycleConfigPath();
+    if (config_path.empty())
+        return;
+
+    lifecycleConfigPath = config_path;
+    lifecycleState = LifecycleState::Stopped;
+    lifecycleEpoch = std::max<std::uint64_t>(lifecycleEpoch, 1);
+    ++lifecycleSequence;
+    lifecycleUpdatedAtMs = nodeLifecycleTimestampMs();
+    lifecycleError.clear();
+    lifecycleErrorCode.clear();
+    lifecycleErrorAtMs = 0;
+}
+
 LogosBlockchainModule::LifecycleDispatch LogosBlockchainModule::beginLifecycleAction(
     const std::string& action,
     const std::string& operation_id,
@@ -994,6 +1146,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     if (is_ok(&subscribe_status)) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
         lifecycleConfigPath = effective_config_path;
+        persistLifecycleConfigLocked();
         return result::ok();
     }
 
@@ -1197,7 +1350,10 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
     }
 
     if (action == "initialize") {
-        StdLogosResult initialized = generate_user_config(initialization_config);
+        const std::string existing_config_path =
+            existingRegularFilePath(lifecycleInitializationConfigPath(initialization_config));
+        StdLogosResult initialized = existing_config_path.empty() ? generate_user_config(initialization_config)
+                                                                  : result::ok(existing_config_path);
         std::string generated_config_path;
         if (initialized.success) {
             generated_config_path = initialized.value.get<std::string>();
@@ -1209,6 +1365,7 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
             std::lock_guard<std::mutex> lock(lifecycleMutex);
             if (activeLifecycleGeneration == dispatch.generation) {
                 lifecycleConfigPath = generated_config_path;
+                persistLifecycleConfigLocked();
             }
         }
         settleLifecycleAction(dispatch, initialized.success, LifecycleState::Stopped, LifecycleState::Uninitialized);
@@ -1266,21 +1423,10 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
             set_if_absent("logs_path", (base / "logs").string());
 
             // The config file itself is written under the same base, using the
-            // caller's path as the relative part below it ("config/user_config.yaml"
-            // → "<base>/config/user_config.yaml"). Absolute / root-anchored inputs
-            // (e.g. "//user_config.yaml" from QDir::currentPath()=="/") are treated
-            // as relative to the base; a missing output defaults to
-            // "<base>/user_config.yaml".
-            fs::path output_rel = "user_config.yaml";
-            if (parsed_args.contains("output") && parsed_args["output"].is_string() &&
-                !parsed_args["output"].get<std::string>().empty()) {
-                const fs::path given(localPathFromFileUrl(parsed_args["output"].get<std::string>()));
-                const fs::path rel = given.relative_path();
-                output_rel = rel.empty() ? given.filename() : rel;
-                if (output_rel.empty())
-                    output_rel = "user_config.yaml";
-            }
-            parsed_args["output"] = (base / output_rel).lexically_normal().string();
+            // caller's path as the relative part below it. Keep this resolution
+            // shared with lifecycle recovery so an existing Basecamp config is
+            // never regenerated merely because the host was recreated.
+            parsed_args["output"] = resolvedConfigOutputPath(parsed_args, true, persistence);
 
             const fs::path output_parent = fs::path(parsed_args["output"].get<std::string>()).parent_path();
             std::error_code create_directories_error;

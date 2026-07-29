@@ -191,6 +191,9 @@ logos_events:
     void newBlock(const std::string& blockJson);
     // clang-format on
 
+protected:
+    void onContextReady() override;
+
 private:
     enum class LifecycleState : std::uint8_t {
         Uninitialized,
@@ -277,6 +280,10 @@ private:
     ) const;
     void emitLifecycleEvents(const std::vector<std::string>& events);
     void rememberCompletedLifecycleOperationLocked(const std::string& operation_id);
+
+    [[nodiscard]] std::string lifecycleInitializationConfigPath(const std::string& config) const;
+    [[nodiscard]] std::string restoredLifecycleConfigPath() const;
+    void persistLifecycleConfigLocked();
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
     [[nodiscard]] StdLogosResult stopPrepared();
