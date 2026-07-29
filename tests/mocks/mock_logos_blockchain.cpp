@@ -16,6 +16,12 @@ std::string g_lastGeneratedStatePath;
 std::string g_lastGeneratedStoragePath;
 std::string g_lastGeneratedLogsPath;
 
+// Captures the callbacks passed to the subscription calls so tests can drive
+// the streams (including the NULL end-of-stream sentinel).
+BlockCallback g_lastNewBlockCallback = nullptr;
+BlockCallback g_lastProcessedBlockCallback = nullptr;
+BlockCallback g_lastLibBlockCallback = nullptr;
+
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
 
@@ -137,7 +143,20 @@ StringResult get_peer_id(const char* config_path) {
 
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback) {
     LOGOS_CMOCK_RECORD("subscribe_to_new_blocks");
+    g_lastNewBlockCallback = callback;
     return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks"));
+}
+
+OperationStatus subscribe_to_processed_blocks(LogosBlockchainNode* node, BlockCallback callback) {
+    LOGOS_CMOCK_RECORD("subscribe_to_processed_blocks");
+    g_lastProcessedBlockCallback = callback;
+    return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_processed_blocks"));
+}
+
+OperationStatus subscribe_to_lib_blocks(LogosBlockchainNode* node, BlockCallback callback) {
+    LOGOS_CMOCK_RECORD("subscribe_to_lib_blocks");
+    g_lastLibBlockCallback = callback;
+    return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_lib_blocks"));
 }
 
 BalanceResult get_balance(LogosBlockchainNode* node, const uint8_t* address, const void* reserved) {
@@ -218,6 +237,15 @@ OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers) {
     return make_status(0);
 }
 
+StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id) {
+    LOGOS_CMOCK_RECORD("get_channel_state");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_channel_state");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_channel_state_error"));
+    return result;
+}
+
 // Wallet-notes mock storage (up to 4 notes)
 static WalletNote s_mockNotes[4];
 
@@ -249,6 +277,23 @@ FfiWalletNotesResult get_wallet_notes(
 OperationStatus free_wallet_notes(WalletNotes notes) {
     LOGOS_CMOCK_RECORD("free_wallet_notes");
     return make_status(0);
+}
+
+StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json) {
+    LOGOS_CMOCK_RECORD("wallet_fund_tx");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("wallet_fund_tx");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "wallet_fund_tx_error"));
+    return result;
+}
+
+SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json) {
+    LOGOS_CMOCK_RECORD("submit_signed_transaction");
+    SubmitTransactionResult result;
+    memset(result.value, 0xFA, sizeof(Hash));
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "submit_signed_transaction_error"));
+    return result;
 }
 
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments) {
@@ -313,6 +358,7 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("get_cryptarchia_info");
     CryptarchiaInfoResult result;
     memset(&s_fakeCryptarchiaInfo, 0, sizeof(s_fakeCryptarchiaInfo));
+    s_fakeCryptarchiaInfo.lib_slot = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "cryptarchia_lib_slot"));
     s_fakeCryptarchiaInfo.slot = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "cryptarchia_slot"));
     s_fakeCryptarchiaInfo.height = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "cryptarchia_height"));
     s_fakeCryptarchiaInfo.mode = static_cast<State>(LOGOS_CMOCK_RETURN(int, "cryptarchia_mode"));
@@ -325,6 +371,34 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
 
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info) {
     LOGOS_CMOCK_RECORD("free_cryptarchia_info");
+    return make_status(0);
+}
+
+StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id) {
+    LOGOS_CMOCK_RECORD("get_block_events");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_block_events");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_block_events_error"));
+    return result;
+}
+
+static TimeInfo s_fakeTimeInfo = {};
+
+TimeInfoResult get_time_info(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_time_info");
+    TimeInfoResult result;
+    s_fakeTimeInfo.slot_duration_ms = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "time_slot_duration_ms"));
+    s_fakeTimeInfo.genesis_time_unix_ms = static_cast<int64_t>(LOGOS_CMOCK_RETURN(int, "time_genesis_time_unix_ms"));
+    s_fakeTimeInfo.current_slot = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "time_current_slot"));
+    s_fakeTimeInfo.current_epoch = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "time_current_epoch"));
+    result.value = &s_fakeTimeInfo;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_time_info_error"));
+    return result;
+}
+
+OperationStatus free_time_info(TimeInfo* info) {
+    LOGOS_CMOCK_RECORD("free_time_info");
     return make_status(0);
 }
 

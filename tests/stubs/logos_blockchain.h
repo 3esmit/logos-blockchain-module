@@ -45,7 +45,7 @@ typedef struct {
 } OperationStatus;
 
 // Consensus state enum
-typedef enum { Bootstrapping, Online } State;
+typedef enum { Bootstrapping, Online, NotStarted } State;
 
 // Key type for generate_key / add_key
 typedef enum { Ed25519, Zk } KeyType;
@@ -134,11 +134,20 @@ typedef struct {
 // Cryptarchia consensus info
 typedef struct {
     uint8_t lib[32];
+    uint64_t lib_slot;
     uint8_t tip[32];
     uint64_t slot;
     uint64_t height;
     State mode;
 } CryptarchiaInfo;
+
+// Time service info
+typedef struct {
+    uint64_t slot_duration_ms;
+    int64_t genesis_time_unix_ms;
+    uint64_t current_slot;
+    uint32_t current_epoch;
+} TimeInfo;
 
 // Result types (C++ structured bindings decompose these)
 typedef struct { LogosBlockchainNode* value; OperationStatus error; } NodeResult;
@@ -152,6 +161,8 @@ typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableV
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
+typedef struct { TimeInfo* value; OperationStatus error; } TimeInfoResult;
+typedef struct { Hash value; OperationStatus error; } SubmitTransactionResult;
 
 // Block event callback
 typedef void (*BlockCallback)(const char* block_json);
@@ -164,6 +175,10 @@ OperationStatus generate_user_config(GenerateConfigArgs args);
 NodeResult start_lb_node(const char* config_path, const char* deployment);
 OperationStatus shutdown_node(LogosBlockchainNode* node);
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback);
+// Streams: each event is a JSON C string; the callback is invoked exactly once
+// with NULL when the stream ends.
+OperationStatus subscribe_to_processed_blocks(LogosBlockchainNode* node, BlockCallback callback);
+OperationStatus subscribe_to_lib_blocks(LogosBlockchainNode* node, BlockCallback callback);
 
 // Config management
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path);
@@ -209,6 +224,10 @@ FfiWalletNotesResult get_wallet_notes(
     const uint8_t* wallet_address,
     const HeaderId* optional_tip);
 OperationStatus free_wallet_notes(WalletNotes notes);
+StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json);
+
+// Transactions
+SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json);
 
 // Channel
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments);
@@ -217,6 +236,7 @@ FfiChannelDepositResult channel_deposit_with_notes(
     const ChannelDepositWithNotesArguments* arguments);
 FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip);
 OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers);
+StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id);
 
 // Blend
 BlendHashResult blend_join_as_core_node(
@@ -232,6 +252,11 @@ StringResult get_transaction(LogosBlockchainNode* node, const TxHash* tx_hash);
 // Cryptarchia
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node);
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info);
+StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id);
+
+// Time
+TimeInfoResult get_time_info(LogosBlockchainNode* node);
+OperationStatus free_time_info(TimeInfo* info);
 
 // Memory management
 OperationStatus free_cstring(char* s);

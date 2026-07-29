@@ -263,15 +263,45 @@ namespace {
 } // namespace
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
-    if (s_instance) {
-        fprintf(stderr, "Received new block: %s\n", block);
-        json j;
-        j["block"] = std::string(block);
-        s_instance->newBlock(j.dump());
-        // SAFETY:
-        // We are getting an owned pointer here which is freed after this callback is called, so there is no need to
-        // free the resource here as we are copying the data!
+    if (!s_instance || !block) {
+        return;
     }
+    fprintf(stderr, "Received new block: %s\n", block);
+    json j;
+    j["block"] = std::string(block);
+    s_instance->newBlock(j.dump());
+    // SAFETY:
+    // We are getting an owned pointer here which is freed after this callback is called, so there is no need to
+    // free the resource here as we are copying the data!
+}
+
+// The stream callbacks pass the FFI's JSON through unwrapped (it is already a
+// complete JSON document with the node's HTTP stream schema). A NULL pointer
+// means the stream ended; it is forwarded as the JSON literal `null` so
+// termination stays in-band on the same event.
+
+void LogosBlockchainModule::on_processed_block_callback(const char* event) {
+    if (!s_instance) {
+        return;
+    }
+    if (!event) {
+        fprintf(stderr, "Processed block stream ended.\n");
+        s_instance->processedBlock("null");
+        return;
+    }
+    s_instance->processedBlock(std::string(event));
+}
+
+void LogosBlockchainModule::on_lib_block_callback(const char* event) {
+    if (!s_instance) {
+        return;
+    }
+    if (!event) {
+        fprintf(stderr, "LIB block stream ended.\n");
+        s_instance->libBlock("null");
+        return;
+    }
+    s_instance->libBlock(std::string(event));
 }
 
 LogosBlockchainModule::LogosBlockchainModule() {
@@ -414,7 +444,15 @@ StdLogosResult LogosBlockchainModule::start(const std::string& config_path, cons
 
     s_instance = this;
     OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
-    return result::from_operation_status(subscribe_status);
+    if (!is_ok(&subscribe_status)) {
+        return result::err(operation_status::take_message(subscribe_status));
+    }
+    OperationStatus processed_status = subscribe_to_processed_blocks(node, on_processed_block_callback);
+    if (!is_ok(&processed_status)) {
+        return result::err(operation_status::take_message(processed_status));
+    }
+    OperationStatus lib_status = subscribe_to_lib_blocks(node, on_lib_block_callback);
+    return result::from_operation_status(lib_status);
 }
 
 StdLogosResult LogosBlockchainModule::stop() {
@@ -906,6 +944,31 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
     return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES));
 }
 
+StdLogosResult LogosBlockchainModule::get_channel_state(const std::string& channel_id_hex) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    const std::vector<uint8_t> bytes = parse_address_hex(channel_id_hex);
+    if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Invalid channel_id (64 hex characters required).");
+    }
+
+    auto [value, error] = ::get_channel_state(node, bytes.data());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    std::string out(value);
+    OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(
+            stderr, "Failed to free channel state string: %s\n", operation_status::take_message(free_status).c_str()
+        );
+    }
+    return result::ok(std::move(out));
+}
+
 StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
     if (!node) {
         return result::err("The node is not running.");
@@ -936,6 +999,38 @@ StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
     return result::ok(obj.dump());
 }
 
+StdLogosResult LogosBlockchainModule::wallet_fund_tx(const std::string& request_json) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::wallet_fund_tx(node, request_json.c_str());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    std::string out(value);
+    OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free funded tx string: %s\n", operation_status::take_message(free_status).c_str());
+    }
+    return result::ok(std::move(out));
+}
+
+// Transactions
+
+StdLogosResult LogosBlockchainModule::submit_signed_transaction(const std::string& signed_tx_json) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::submit_signed_transaction(node, signed_tx_json.c_str());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES));
+}
+
 // Blend
 
 StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
@@ -955,11 +1050,7 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    auto [value, error] = ::blend_join_as_core_node(
-        node,
-        locator.c_str(),
-        locked_note_id_bytes.data()
-    );
+    auto [value, error] = ::blend_join_as_core_node(node, locator.c_str(), locked_note_id_bytes.data());
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));
     }
@@ -1049,14 +1140,75 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
 
     json obj;
     obj["lib"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->lib), ADDRESS_BYTES);
+    obj["lib_slot"] = static_cast<int64_t>(value->lib_slot);
     obj["tip"] = bytes_to_hex(reinterpret_cast<const uint8_t*>(value->tip), ADDRESS_BYTES);
     obj["slot"] = static_cast<int64_t>(value->slot);
     obj["height"] = static_cast<int64_t>(value->height);
-    obj["mode"] = (value->mode == State::Online) ? "Online" : "Bootstrapping";
+    switch (value->mode) {
+    case State::Online:
+        obj["mode"] = "Online";
+        break;
+    case State::NotStarted:
+        obj["mode"] = "NotStarted";
+        break;
+    default:
+        obj["mode"] = "Bootstrapping";
+        break;
+    }
 
     OperationStatus free_status = free_cryptarchia_info(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free cryptarchia info: %s\n", operation_status::take_message(free_status).c_str());
+    }
+    return result::ok(obj.dump());
+}
+
+StdLogosResult LogosBlockchainModule::get_block_events(const std::string& header_id_hex) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    const std::vector<uint8_t> bytes = parse_address_hex(header_id_hex);
+    if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Header ID must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_block_events(node, reinterpret_cast<const HeaderId*>(bytes.data()));
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    std::string out(value);
+    OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(
+            stderr, "Failed to free block events string: %s\n", operation_status::take_message(free_status).c_str()
+        );
+    }
+    return result::ok(std::move(out));
+}
+
+// Time
+
+StdLogosResult LogosBlockchainModule::get_time_info() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_time_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    json obj;
+    obj["slot_duration_ms"] = static_cast<int64_t>(value->slot_duration_ms);
+    obj["genesis_time_unix_ms"] = value->genesis_time_unix_ms;
+    obj["current_slot"] = static_cast<int64_t>(value->current_slot);
+    obj["current_epoch"] = value->current_epoch;
+
+    OperationStatus free_status = free_time_info(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free time info: %s\n", operation_status::take_message(free_status).c_str());
     }
     return result::ok(obj.dump());
 }

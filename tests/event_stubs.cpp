@@ -12,6 +12,23 @@
 
 #include "logos_blockchain_module.h"
 
+// Recorded payloads of the most recent stream events, so tests can assert what
+// the trampolines forwarded (including the `null` end-of-stream sentinel).
+std::string g_lastNewBlockEventJson;
+std::string g_lastProcessedBlockEventJson;
+std::string g_lastLibBlockEventJson;
+
 void LogosBlockchainModule::newBlock(const std::string& blockJson) {
+    g_lastNewBlockEventJson = blockJson;
     emitEventImpl_("newBlock", nullptr);
+}
+
+void LogosBlockchainModule::processedBlock(const std::string& eventJson) {
+    g_lastProcessedBlockEventJson = eventJson;
+    emitEventImpl_("processedBlock", nullptr);
+}
+
+void LogosBlockchainModule::libBlock(const std::string& blockInfoJson) {
+    g_lastLibBlockEventJson = blockInfoJson;
+    emitEventImpl_("libBlock", nullptr);
 }

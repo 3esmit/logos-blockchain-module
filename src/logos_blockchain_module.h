@@ -99,6 +99,16 @@ public:
     ) const;
     [[nodiscard]] StdLogosResult leader_claim() const;
     [[nodiscard]] StdLogosResult wallet_get_claimable_vouchers() const;
+    // Funds an unsigned transaction: request_json is passed through to the
+    // node's wallet fund endpoint (same JSON schema as the HTTP `/wallet/fund`
+    // request body); returns the funded transaction as JSON.
+    [[nodiscard]] StdLogosResult wallet_fund_tx(const std::string& request_json) const;
+
+    // Transactions
+    // Submits a signed transaction: signed_tx_json is passed through to the
+    // node (same JSON schema as the HTTP `/mantle/transact` request body);
+    // returns the transaction hash hex on success.
+    [[nodiscard]] StdLogosResult submit_signed_transaction(const std::string& signed_tx_json) const;
 
     // Channel
     // Amount-based deposit: the binding selects funding notes itself (splitting a
@@ -128,6 +138,11 @@ public:
         const std::string& optional_tip_hex
     ) const;
 
+    // State of the channel with the given 32-byte channel ID, as JSON (same
+    // schema as the node's `/mantle/channel/{id}` HTTP endpoint). Fails with a
+    // not-found error when the channel does not exist yet.
+    [[nodiscard]] StdLogosResult get_channel_state(const std::string& channel_id_hex) const;
+
     // Blend
     [[nodiscard]] StdLogosResult blend_join_as_core_node(
         const std::string& locator,
@@ -141,6 +156,13 @@ public:
 
     // Cryptarchia
     [[nodiscard]] StdLogosResult get_cryptarchia_info() const;
+    // Events emitted by the block with the given 32-byte header ID, as JSON.
+    [[nodiscard]] StdLogosResult get_block_events(const std::string& header_id_hex) const;
+
+    // Time
+    // Consensus time info as JSON:
+    //   { slot_duration_ms, genesis_time_unix_ms, current_slot, current_epoch }
+    [[nodiscard]] StdLogosResult get_time_info() const;
 
     // clang-format off
 // Clang-format only handles public/private/protected, so it miss-indents this section.
@@ -150,6 +172,19 @@ logos_events:
     // blockJson is the full block serialized as JSON.
     // ReSharper disable once CppFunctionIsNotImplemented
     void newBlock(const std::string& blockJson);
+    // Fired per processed block. eventJson carries the block plus the chain
+    // state after processing it (same schema as the node's
+    // `/cryptarchia/blocks/stream` HTTP endpoint; transaction ids at
+    // `transactions[].mantle_tx.hash`). When the stream ends, fired exactly
+    // once with the JSON literal `null` — restart the node subscription (via
+    // stop/start) to keep receiving events.
+    // ReSharper disable once CppFunctionIsNotImplemented
+    void processedBlock(const std::string& eventJson);
+    // Fired per newly finalized (LIB) block. blockInfoJson uses the same
+    // schema as the node's `/cryptarchia/lib/stream` HTTP endpoint. When the
+    // stream ends, fired exactly once with the JSON literal `null`.
+    // ReSharper disable once CppFunctionIsNotImplemented
+    void libBlock(const std::string& blockInfoJson);
     // clang-format on
 
 private:
@@ -158,6 +193,10 @@ private:
     // Static instance for C callback (C API doesn't support user data)
     static LogosBlockchainModule* s_instance;
 
-    // C-compatible callback function
+    // C-compatible callback functions. The stream callbacks receive NULL
+    // exactly once when their stream ends; that is forwarded as the JSON
+    // literal `null` on the corresponding event.
     static void on_new_block_callback(const char* block);
+    static void on_processed_block_callback(const char* event);
+    static void on_lib_block_callback(const char* event);
 };

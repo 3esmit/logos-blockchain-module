@@ -321,6 +321,42 @@ LOGOS_TEST(get_cryptarchia_info_without_node_returns_error) {
     LOGOS_ASSERT_FALSE(module.get_cryptarchia_info().success);
 }
 
+LOGOS_TEST(get_block_events_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    LOGOS_ASSERT_FALSE(module.get_block_events(VALID_HEX).success);
+}
+
+LOGOS_TEST(get_time_info_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    LOGOS_ASSERT_FALSE(module.get_time_info().success);
+}
+
+LOGOS_TEST(get_channel_state_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.get_channel_state(VALID_HEX);
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
+LOGOS_TEST(wallet_fund_tx_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.wallet_fund_tx("{}");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
+LOGOS_TEST(submit_signed_transaction_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.submit_signed_transaction("{}");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
 // ============================================================================
 // Node lifecycle (start / stop)
 // ============================================================================
@@ -334,7 +370,34 @@ LOGOS_TEST(start_succeeds_with_mocked_dependencies) {
     LOGOS_ASSERT_TRUE(module != nullptr);
     LOGOS_ASSERT(t.cFunctionCalled("start_lb_node"));
     LOGOS_ASSERT(t.cFunctionCalled("subscribe_to_new_blocks"));
+    LOGOS_ASSERT(t.cFunctionCalled("subscribe_to_processed_blocks"));
+    LOGOS_ASSERT(t.cFunctionCalled("subscribe_to_lib_blocks"));
     delete module;
+}
+
+LOGOS_TEST(start_fails_when_processed_blocks_subscription_fails) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    LogosBlockchainModule module;
+
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("subscribe_to_processed_blocks").returns(1);
+
+    LOGOS_ASSERT_FALSE(module.start(tmpDir.filePath("config.json"), "").success);
+}
+
+LOGOS_TEST(start_fails_when_lib_blocks_subscription_fails) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    LogosBlockchainModule module;
+
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("subscribe_to_processed_blocks").returns(0);
+    t.mockCFunction("subscribe_to_lib_blocks").returns(1);
+
+    LOGOS_ASSERT_FALSE(module.start(tmpDir.filePath("config.json"), "").success);
 }
 
 LOGOS_TEST(start_returns_1_when_already_running) {
@@ -522,6 +585,30 @@ LOGOS_TEST(get_transaction_rejects_invalid_hex) {
     StdLogosResult result = module->get_transaction("bad");
     LOGOS_ASSERT_FALSE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.error, "64 hex"));
+    delete module;
+}
+
+LOGOS_TEST(get_block_events_rejects_invalid_hex) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    StdLogosResult result = module->get_block_events("tooshort");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "64 hex"));
+    delete module;
+}
+
+LOGOS_TEST(get_channel_state_rejects_invalid_hex) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    StdLogosResult result = module->get_channel_state("bad");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "channel_id"));
     delete module;
 }
 
@@ -1013,6 +1100,104 @@ LOGOS_TEST(wallet_get_claimable_vouchers_returns_error_on_ffi_failure) {
     delete module;
 }
 
+LOGOS_TEST(wallet_fund_tx_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("wallet_fund_tx").returns(R"({"mantle_tx":{"ops":[]}})");
+    t.mockCFunction("wallet_fund_tx_error").returns(0);
+
+    StdLogosResult result = module->wallet_fund_tx(R"({"tx":{},"funding_keys":[]})");
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "mantle_tx"));
+    LOGOS_ASSERT(t.cFunctionCalled("wallet_fund_tx"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_fund_tx_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("wallet_fund_tx_error").returns(1);
+
+    StdLogosResult result = module->wallet_fund_tx("{}");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
+// Transactions
+
+LOGOS_TEST(submit_signed_transaction_returns_tx_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("submit_signed_transaction_error").returns(0);
+
+    StdLogosResult result = module->submit_signed_transaction("{}");
+    LOGOS_ASSERT_TRUE(result.success);
+    // Mock fills hash with 0xFA -> hex "fafa...fa" (64 chars)
+    std::string hash = result.value.get<std::string>();
+    LOGOS_ASSERT_EQ(static_cast<int>(hash.length()), 64);
+    LOGOS_ASSERT_TRUE(hash.substr(0, 2) == "fa");
+    LOGOS_ASSERT(t.cFunctionCalled("submit_signed_transaction"));
+    delete module;
+}
+
+LOGOS_TEST(submit_signed_transaction_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("submit_signed_transaction_error").returns(1);
+
+    StdLogosResult result = module->submit_signed_transaction("{}");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
+// Channel state
+
+LOGOS_TEST(get_channel_state_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_channel_state").returns(R"({"tip":"abc","inscriptions":[]})");
+    t.mockCFunction("get_channel_state_error").returns(0);
+
+    StdLogosResult result = module->get_channel_state(VALID_HEX);
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "inscriptions"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_channel_state"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
+LOGOS_TEST(get_channel_state_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_channel_state_error").returns(1);
+
+    StdLogosResult result = module->get_channel_state(VALID_HEX);
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
 // Blend
 
 LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
@@ -1146,6 +1331,7 @@ LOGOS_TEST(get_cryptarchia_info_returns_json_on_success) {
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_lib_slot").returns(90);
     t.mockCFunction("cryptarchia_slot").returns(100);
     t.mockCFunction("cryptarchia_height").returns(50);
     t.mockCFunction("cryptarchia_mode").returns(1); // Online
@@ -1160,8 +1346,23 @@ LOGOS_TEST(get_cryptarchia_info_returns_json_on_success) {
     LOGOS_ASSERT_TRUE(contains(json, "Online"));
     LOGOS_ASSERT_TRUE(contains(json, "lib"));
     LOGOS_ASSERT_TRUE(contains(json, "tip"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"lib_slot\":90"));
     LOGOS_ASSERT(t.cFunctionCalled("get_cryptarchia_info"));
     LOGOS_ASSERT(t.cFunctionCalled("free_cryptarchia_info"));
+    delete module;
+}
+
+LOGOS_TEST(get_cryptarchia_info_not_started_mode) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_cryptarchia_info_error").returns(0);
+    t.mockCFunction("cryptarchia_mode").returns(2); // NotStarted
+
+    StdLogosResult result = module->get_cryptarchia_info();
+    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "NotStarted"));
     delete module;
 }
 
@@ -1188,6 +1389,147 @@ LOGOS_TEST(get_cryptarchia_info_returns_error_on_ffi_failure) {
     t.mockCFunction("get_cryptarchia_info_error").returns(1);
 
     LOGOS_ASSERT_FALSE(module->get_cryptarchia_info().success);
+    delete module;
+}
+
+LOGOS_TEST(get_block_events_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_block_events").returns(R"([{"type":"inscription"}])");
+    t.mockCFunction("get_block_events_error").returns(0);
+
+    StdLogosResult result = module->get_block_events(VALID_HEX);
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "inscription"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_block_events"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
+LOGOS_TEST(get_block_events_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_block_events_error").returns(1);
+
+    LOGOS_ASSERT_FALSE(module->get_block_events(VALID_HEX).success);
+    delete module;
+}
+
+// Time
+
+LOGOS_TEST(get_time_info_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_time_info_error").returns(0);
+    t.mockCFunction("time_slot_duration_ms").returns(2000);
+    t.mockCFunction("time_genesis_time_unix_ms").returns(1700000);
+    t.mockCFunction("time_current_slot").returns(1234);
+    t.mockCFunction("time_current_epoch").returns(7);
+
+    StdLogosResult result = module->get_time_info();
+    LOGOS_ASSERT_TRUE(result.success);
+    std::string json = result.value.get<std::string>();
+    LOGOS_ASSERT_TRUE(contains(json, "\"slot_duration_ms\":2000"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"genesis_time_unix_ms\":1700000"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"current_slot\":1234"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"current_epoch\":7"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_time_info"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_time_info"));
+    delete module;
+}
+
+LOGOS_TEST(get_time_info_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_time_info_error").returns(1);
+
+    LOGOS_ASSERT_FALSE(module->get_time_info().success);
+    delete module;
+}
+
+// ============================================================================
+// Stream events (trampolines drive logos_events; end of stream = JSON null)
+// ============================================================================
+
+// Captured by the mock subscribe calls (mock_logos_blockchain.cpp).
+extern BlockCallback g_lastNewBlockCallback;
+extern BlockCallback g_lastProcessedBlockCallback;
+extern BlockCallback g_lastLibBlockCallback;
+// Recorded by the event stubs (event_stubs.cpp).
+extern std::string g_lastNewBlockEventJson;
+extern std::string g_lastProcessedBlockEventJson;
+extern std::string g_lastLibBlockEventJson;
+
+LOGOS_TEST(processed_block_stream_forwards_json_and_null_sentinel) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+    LOGOS_ASSERT_TRUE(g_lastProcessedBlockCallback != nullptr);
+
+    g_lastProcessedBlockEventJson.clear();
+    g_lastProcessedBlockCallback(R"({"header_id":"abc","transactions":[]})");
+    LOGOS_ASSERT_EQ(g_lastProcessedBlockEventJson, std::string(R"({"header_id":"abc","transactions":[]})"));
+
+    g_lastProcessedBlockCallback(nullptr);
+    LOGOS_ASSERT_EQ(g_lastProcessedBlockEventJson, std::string("null"));
+    delete module;
+}
+
+LOGOS_TEST(lib_block_stream_forwards_json_and_null_sentinel) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+    LOGOS_ASSERT_TRUE(g_lastLibBlockCallback != nullptr);
+
+    g_lastLibBlockEventJson.clear();
+    g_lastLibBlockCallback(R"({"header_id":"def","slot":9})");
+    LOGOS_ASSERT_EQ(g_lastLibBlockEventJson, std::string(R"({"header_id":"def","slot":9})"));
+
+    g_lastLibBlockCallback(nullptr);
+    LOGOS_ASSERT_EQ(g_lastLibBlockEventJson, std::string("null"));
+    delete module;
+}
+
+// The legacy new-block stream never sends NULL, but the trampoline must not
+// crash if it ever does (regression test for the added guard).
+LOGOS_TEST(new_block_callback_ignores_null_pointer) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+    LOGOS_ASSERT_TRUE(g_lastNewBlockCallback != nullptr);
+
+    g_lastNewBlockEventJson.clear();
+    g_lastNewBlockCallback(nullptr);
+    LOGOS_ASSERT_EQ(g_lastNewBlockEventJson, std::string());
+    delete module;
+}
+
+// Stream events are not delivered after the module stops (s_instance cleared).
+LOGOS_TEST(stream_events_not_delivered_after_stop) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+    LOGOS_ASSERT_TRUE(module->stop().success);
+
+    g_lastProcessedBlockEventJson.clear();
+    g_lastProcessedBlockCallback(R"({"header_id":"abc"})");
+    LOGOS_ASSERT_EQ(g_lastProcessedBlockEventJson, std::string());
     delete module;
 }
 
