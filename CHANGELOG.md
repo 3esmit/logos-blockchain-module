@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.7] - Alpha
+
+### Fixed
+
+- Recover a Basecamp Bedrock lifecycle context from its existing configuration after host recreation.
+
 ## [0.2.6] - Alpha
 
 ### Added

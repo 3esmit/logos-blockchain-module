@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unistd.h>
@@ -191,6 +192,85 @@ LOGOS_TEST(node_action_initializes_with_ordered_redacted_events) {
     LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
     LOGOS_ASSERT_EQ(status.at("epoch").get<std::uint64_t>(), 1U);
     LOGOS_ASSERT_TRUE(status.dump().find(secret) == std::string::npos);
+}
+
+LOGOS_TEST(node_action_recovers_basecamp_config_after_host_recreation) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LOGOS_ASSERT_TRUE(tmp_dir.isValid());
+
+    const fs::path persistence = tmp_dir.path / "persistence";
+    const fs::path config_path = tmp_dir.path / "inspector-workspace" / "config" / "bedrock.yaml";
+    fs::create_directories(config_path.parent_path());
+    {
+        std::ofstream config(config_path, std::ios::binary);
+        config << "bedrock-sentinel";
+    }
+
+    {
+        LogosBlockchainModule original;
+        original._logosCoreSetContext_("/module", "bedrock", persistence.string());
+        const json initialized = invoke_node_action(
+            original,
+            lifecycle_command(
+                "bedrock-recover-existing-v1",
+                "initialize",
+                {{"config", json({{"output", config_path.string()}}).dump()}}
+            )
+        );
+        LOGOS_ASSERT_TRUE(initialized.at("accepted").get<bool>());
+        LOGOS_ASSERT_EQ(t.cFunctionCallCount("generate_user_config"), 0);
+        LOGOS_ASSERT_EQ(read_node_status(original).at("state").get<std::string>(), std::string("stopped"));
+    }
+
+    const fs::path lifecycle_state = persistence / ".logos-blockchain-lifecycle-v1.json";
+    LOGOS_ASSERT_TRUE(fs::is_regular_file(lifecycle_state));
+    std::ifstream state_input(lifecycle_state, std::ios::binary);
+    const std::string state((std::istreambuf_iterator<char>(state_input)), std::istreambuf_iterator<char>());
+    LOGOS_ASSERT_TRUE(state.find(config_path.string()) != std::string::npos);
+    std::ifstream config_input(config_path, std::ios::binary);
+    const std::string config((std::istreambuf_iterator<char>(config_input)), std::istreambuf_iterator<char>());
+    LOGOS_ASSERT_EQ(config, std::string("bedrock-sentinel"));
+
+    LogosBlockchainModule recreated;
+    recreated._logosCoreSetContext_("/module", "bedrock", persistence.string());
+    const json recovered = read_node_status(recreated);
+    LOGOS_ASSERT_EQ(recovered.at("state").get<std::string>(), std::string("stopped"));
+    LOGOS_ASSERT_EQ(recovered.at("epoch").get<std::uint64_t>(), 1U);
+    LOGOS_ASSERT_EQ(recovered.at("supported_actions").at(0).get<std::string>(), std::string("start"));
+
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    reset_node_changed_events();
+    const json started = invoke_node_action(recreated, lifecycle_command("bedrock-start-after-recovery-v1", "start"));
+    LOGOS_ASSERT_TRUE(started.at("accepted").get<bool>());
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(0).at("status").at("state").get<std::string>(), std::string("starting"));
+    LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("running"));
+    LOGOS_ASSERT_EQ(events.at(1).at("epoch").get<std::uint64_t>(), recovered.at("epoch").get<std::uint64_t>());
+}
+
+LOGOS_TEST(node_status_ignores_missing_persisted_config) {
+    TempDir tmp_dir;
+    LOGOS_ASSERT_TRUE(tmp_dir.isValid());
+    const fs::path persistence = tmp_dir.path / "persistence";
+    fs::create_directories(persistence);
+    {
+        std::ofstream state(persistence / ".logos-blockchain-lifecycle-v1.json", std::ios::binary);
+        state << json({
+                          {"schema", "logos.blockchain.lifecycle_config"},
+                          {"version", 1},
+                          {"config_path", (tmp_dir.path / "missing.yaml").string()},
+                      })
+                     .dump();
+    }
+
+    LogosBlockchainModule module;
+    module._logosCoreSetContext_("/module", "bedrock", persistence.string());
+    const json status = read_node_status(module);
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("uninitialized"));
+    LOGOS_ASSERT_EQ(status.at("supported_actions").at(0).get<std::string>(), std::string("initialize"));
 }
 
 LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
