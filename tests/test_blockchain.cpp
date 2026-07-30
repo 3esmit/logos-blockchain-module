@@ -742,6 +742,14 @@ LOGOS_TEST(get_finalized_blocks_range_without_node_returns_error) {
     LOGOS_ASSERT_FALSE(module.get_finalized_blocks_range(1, 10, 10).success);
 }
 
+LOGOS_TEST(diagnostic_reads_without_node_return_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    LOGOS_ASSERT_FALSE(module.get_cryptarchia_headers().success);
+    LOGOS_ASSERT_FALSE(module.get_network_info().success);
+    LOGOS_ASSERT_FALSE(module.get_mantle_metrics().success);
+}
+
 LOGOS_TEST(get_transaction_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
@@ -1851,6 +1859,59 @@ LOGOS_TEST(get_finalized_blocks_range_propagates_ffi_error_and_rejects_empty_suc
     const StdLogosResult empty = module->get_finalized_blocks_range(40, 42, 3);
     LOGOS_ASSERT_FALSE(empty.success);
     LOGOS_ASSERT_EQ(empty.error, std::string("get_finalized_blocks_range returned an empty response."));
+    delete module;
+}
+
+LOGOS_TEST(diagnostic_reads_project_the_ffi_json) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string headers = R"(["header-a","header-b"])";
+    const std::string network = R"({"n_peers":3})";
+    const std::string metrics = R"({"transactions":1})";
+    t.mockCFunction("get_cryptarchia_headers").returns(headers.c_str());
+    t.mockCFunction("get_cryptarchia_headers_error").returns(0);
+    t.mockCFunction("get_network_info").returns(network.c_str());
+    t.mockCFunction("get_network_info_error").returns(0);
+    t.mockCFunction("get_mantle_metrics").returns(metrics.c_str());
+    t.mockCFunction("get_mantle_metrics_error").returns(0);
+
+    const StdLogosResult headers_result = module->get_cryptarchia_headers();
+    const StdLogosResult network_result = module->get_network_info();
+    const StdLogosResult metrics_result = module->get_mantle_metrics();
+    LOGOS_ASSERT_TRUE(headers_result.success);
+    LOGOS_ASSERT_TRUE(network_result.success);
+    LOGOS_ASSERT_TRUE(metrics_result.success);
+    LOGOS_ASSERT_EQ(headers_result.value.get<std::string>(), headers);
+    LOGOS_ASSERT_EQ(network_result.value.get<std::string>(), network);
+    LOGOS_ASSERT_EQ(metrics_result.value.get<std::string>(), metrics);
+    LOGOS_ASSERT(t.cFunctionCalled("get_cryptarchia_headers"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_network_info"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_mantle_metrics"));
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("free_cstring"), 3);
+    delete module;
+}
+
+LOGOS_TEST(diagnostic_reads_propagate_ffi_errors_and_reject_empty_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_cryptarchia_headers_error").returns(1);
+    LOGOS_ASSERT_FALSE(module->get_cryptarchia_headers().success);
+    t.mockCFunction("get_network_info_error").returns(1);
+    LOGOS_ASSERT_FALSE(module->get_network_info().success);
+    t.mockCFunction("get_mantle_metrics_error").returns(1);
+    LOGOS_ASSERT_FALSE(module->get_mantle_metrics().success);
+
+    t.mockCFunction("get_cryptarchia_headers_error").returns(0);
+    t.mockCFunction("get_cryptarchia_headers").returns(static_cast<const char*>(nullptr));
+    const StdLogosResult empty = module->get_cryptarchia_headers();
+    LOGOS_ASSERT_FALSE(empty.success);
+    LOGOS_ASSERT_EQ(empty.error, std::string("get_cryptarchia_headers returned an empty response."));
     delete module;
 }
 

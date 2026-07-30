@@ -172,8 +172,12 @@ public:
         uint64_t blocks_limit
     ) const;
 
-    // Cryptarchia
+    // Bedrock diagnostics. These use the same typed C API reads as the
+    // direct-node diagnostic endpoints, without forwarding HTTP requests.
     [[nodiscard]] StdLogosResult get_cryptarchia_info() const;
+    [[nodiscard]] StdLogosResult get_cryptarchia_headers() const;
+    [[nodiscard]] StdLogosResult get_network_info() const;
+    [[nodiscard]] StdLogosResult get_mantle_metrics() const;
 
     // clang-format off
 // Clang-format only handles public/private/protected, so it miss-indents this section.

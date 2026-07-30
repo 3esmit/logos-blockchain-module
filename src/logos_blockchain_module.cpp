@@ -2200,6 +2200,45 @@ StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
     return copy_cstring_result(value, "get_finalized_blocks_range");
 }
 
+StdLogosResult LogosBlockchainModule::get_cryptarchia_headers() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_cryptarchia_headers(node, nullptr, nullptr);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_cryptarchia_headers");
+}
+
+StdLogosResult LogosBlockchainModule::get_network_info() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_network_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_network_info");
+}
+
+StdLogosResult LogosBlockchainModule::get_mantle_metrics() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_mantle_metrics(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    return copy_cstring_result(value, "get_mantle_metrics");
+}
+
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
     if (!node) {
         return result::err("The node is not running.");

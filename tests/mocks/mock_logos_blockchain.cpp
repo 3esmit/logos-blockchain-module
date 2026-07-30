@@ -370,6 +370,37 @@ FfiGetFinalizedBlocksRangeResult get_finalized_blocks_range(
     return result;
 }
 
+FfiDiagnosticJsonResult get_cryptarchia_headers(
+    const LogosBlockchainNode* node,
+    const HeaderId* from_descendant,
+    const HeaderId* to_ancestor
+) {
+    LOGOS_CMOCK_RECORD("get_cryptarchia_headers");
+    FfiDiagnosticJsonResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_cryptarchia_headers");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_cryptarchia_headers_error"));
+    return result;
+}
+
+FfiDiagnosticJsonResult get_network_info(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_network_info");
+    FfiDiagnosticJsonResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_network_info");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_network_info_error"));
+    return result;
+}
+
+FfiDiagnosticJsonResult get_mantle_metrics(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_mantle_metrics");
+    FfiDiagnosticJsonResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_mantle_metrics");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_mantle_metrics_error"));
+    return result;
+}
+
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("get_cryptarchia_info");
     CryptarchiaInfoResult result;
