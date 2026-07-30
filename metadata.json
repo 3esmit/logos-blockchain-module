@@ -1,7 +1,7 @@
 {
   "name": "blockchain_module",
   "display_name": "Blockchain Module",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Logos blockchain node for logos-core",
   "author": "Logos Blockchain Team",
   "type": "core",

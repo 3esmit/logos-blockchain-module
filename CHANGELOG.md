@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8] - Alpha
+
+### Added
+
+- Expose typed Bedrock diagnostic reads for Cryptarchia headers, network
+  information, and Mantle metrics through LogosCore.
+
 ## [0.2.7] - Alpha
 
 ### Fixed

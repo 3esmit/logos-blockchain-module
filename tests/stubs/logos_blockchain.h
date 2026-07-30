@@ -157,6 +157,7 @@ typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
 typedef StringResult FfiGetTimeInfoResult;
 typedef StringResult FfiGetFinalizedBlocksRangeResult;
+typedef StringResult FfiDiagnosticJsonResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
 
 // Block event callback
@@ -243,6 +244,13 @@ FfiGetFinalizedBlocksRangeResult get_finalized_blocks_range(
     uint64_t from_slot,
     uint64_t to_slot,
     uint64_t blocks_limit);
+FfiDiagnosticJsonResult get_cryptarchia_headers(
+    const LogosBlockchainNode* node,
+    const HeaderId* from_descendant,
+    const HeaderId* to_ancestor
+);
+FfiDiagnosticJsonResult get_network_info(const LogosBlockchainNode* node);
+FfiDiagnosticJsonResult get_mantle_metrics(const LogosBlockchainNode* node);
 
 // Cryptarchia
 uint32_t cryptarchia_info_abi_version(void);
