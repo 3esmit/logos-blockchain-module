@@ -16,3 +16,11 @@ state/
 # AI
 .codex
 
+# Doc-test output: generated artifacts are disposable, but keep the rendered
+# .md that the docs embed.
+doctests/outputs/*
+!doctests/outputs/*.md
+# Disposable scratch dir for doc-test previews (kept separate so it never
+# clobbers the committed .md in doctests/outputs).
+doctests/preview-outputs
+doctest-local
