@@ -2,7 +2,7 @@
   description = "Logos Blockchain Module - Qt6 Plugin";
 
   inputs = {
-    logos-module-builder.url = "github:logos-co/logos-module-builder/0.2.4";
+    logos-module-builder.url = "github:3esmit/logos-module-builder?rev=afe4430ee6eb7ba45c08a516a43e18500720c715";
     logos-blockchain.url = "github:3esmit/logos-blockchain?rev=2d94050319272417cd8a9b957cd247d51d52ebfc";
   };
 
