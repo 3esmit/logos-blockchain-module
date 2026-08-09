@@ -77,6 +77,7 @@ namespace {
     constexpr const char* PERSISTED_LIFECYCLE_STATE_SCHEMA = "logos.blockchain.lifecycle_config";
     constexpr size_t MAX_PERSISTED_LIFECYCLE_STATE_BYTES = 4 * 1024;
     std::atomic<std::uint64_t> node_lifecycle_instance_counter{0};
+    thread_local LogosBlockchainModule* active_callback_instance = nullptr;
 
     std::int64_t nodeLifecycleTimestampMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -630,16 +631,32 @@ namespace {
 } // namespace
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
-    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
-    LogosBlockchainModule* instance = s_instance;
-    if (!instance || !block) {
-        return;
+    LogosBlockchainModule* instance = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        instance = s_instance;
+        if (!instance || !block) {
+            return;
+        }
+
+        std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
+        if (!instance->node) {
+            return;
+        }
+        std::lock_guard<std::mutex> callback_lock(instance->callbackMutex);
+        ++instance->callbacksInFlight;
     }
 
-    std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
-    if (!instance->node) {
-        return;
-    }
+    struct CallbackScope {
+        LogosBlockchainModule* instance;
+        ~CallbackScope() {
+            std::lock_guard<std::mutex> lock(instance->callbackMutex);
+            --instance->callbacksInFlight;
+            instance->callbackCondition.notify_all();
+            active_callback_instance = nullptr;
+        }
+    } callback_scope{instance};
+    active_callback_instance = instance;
 
     // The C API borrows this pointer for the duration of the callback. Copy the
     // JSON synchronously and avoid calling back into the node from this stream
@@ -689,6 +706,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         node_to_shutdown = node;
         node = nullptr;
     }
+    waitForCallbacks();
     // shutdown_node consumes the handle and may wait for callback work. Do not
     // hold either lifetime lock while it runs, or a callback waiting on the
     // singleton mutex could deadlock shutdown.
@@ -698,6 +716,14 @@ LogosBlockchainModule::~LogosBlockchainModule() {
             (void)operation_status::take_message(status);
         }
     }
+}
+
+void LogosBlockchainModule::waitForCallbacks() {
+    if (active_callback_instance == this) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(callbackMutex);
+    callbackCondition.wait(lock, [this] { return callbacksInFlight == 0; });
 }
 
 const char* LogosBlockchainModule::lifecycleStateName(const LifecycleState state) {
@@ -1294,6 +1320,7 @@ StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
         s_instance = nullptr;
     }
 
+    waitForCallbacks();
     if (shutdown_attempted) {
         *shutdown_attempted = true;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -260,6 +261,9 @@ private:
     std::unordered_map<std::string, LifecycleOperation> lifecycleOperations;
     std::deque<std::string> completedLifecycleOperationIds;
     std::thread lifecycleWorker;
+    mutable std::mutex callbackMutex;
+    mutable std::condition_variable callbackCondition;
+    std::size_t callbacksInFlight = 0;
 
     LifecycleDispatch beginLifecycleAction(
         const std::string& action,
@@ -299,6 +303,7 @@ private:
     [[nodiscard]] std::string lifecycleInitializationConfigPath(const std::string& config) const;
     [[nodiscard]] std::string restoredLifecycleConfigPath() const;
     void persistLifecycleConfigLocked();
+    void waitForCallbacks();
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
     [[nodiscard]] StdLogosResult stopPrepared(bool* shutdown_attempted = nullptr);
