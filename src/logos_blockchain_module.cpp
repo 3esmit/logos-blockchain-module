@@ -9,11 +9,13 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -597,6 +599,7 @@ LogosBlockchainModule::LogosBlockchainModule()
     : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {}
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    std::thread worker;
     {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
         ++lifecycleGeneration;
@@ -604,7 +607,11 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         activeLifecycleOperationId.clear();
         activeLifecycleAction.clear();
         activeLifecycleGeneration = 0;
+        worker = std::move(lifecycleWorker);
     }
+
+    if (worker.joinable())
+        worker.join();
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
@@ -746,6 +753,18 @@ void LogosBlockchainModule::emitLifecycleEvents(const std::vector<std::string>& 
     for (const std::string& event : events) {
         nodeChanged(event);
     }
+}
+
+void LogosBlockchainModule::joinSettledLifecycleWorker() {
+    std::thread worker;
+    {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        if (lifecyclePending)
+            return;
+        worker = std::move(lifecycleWorker);
+    }
+    if (worker.joinable())
+        worker.join();
 }
 
 void LogosBlockchainModule::rememberCompletedLifecycleOperationLocked(const std::string& operation_id) {
@@ -1205,6 +1224,48 @@ std::string LogosBlockchainModule::nodeStatus() {
     return lifecycleSnapshotLocked();
 }
 
+void LogosBlockchainModule::dispatchLifecycleAction(
+    const LifecycleDispatch& dispatch,
+    const std::string& initialization_config,
+    const std::string& deployment
+) {
+    if (dispatch.action == "initialize") {
+        const std::string existing_config_path =
+            existingRegularFilePath(lifecycleInitializationConfigPath(initialization_config));
+        StdLogosResult initialized = existing_config_path.empty() ? generate_user_config(initialization_config)
+                                                                  : result::ok(existing_config_path);
+        std::string generated_config_path;
+        if (initialized.success) {
+            generated_config_path = initialized.value.get<std::string>();
+            if (generated_config_path.empty())
+                initialized = result::err("Generated configuration path is unavailable.");
+        }
+        if (initialized.success) {
+            std::lock_guard<std::mutex> lock(lifecycleMutex);
+            if (activeLifecycleGeneration == dispatch.generation) {
+                lifecycleConfigPath = generated_config_path;
+                persistLifecycleConfigLocked();
+            }
+        }
+        settleLifecycleAction(dispatch, initialized.success, LifecycleState::Stopped, LifecycleState::Uninitialized);
+        return;
+    }
+
+    if (dispatch.action == "start") {
+        std::string config_path;
+        {
+            std::lock_guard<std::mutex> lock(lifecycleMutex);
+            config_path = lifecycleConfigPath;
+        }
+        const StdLogosResult started = startPrepared(config_path, deployment);
+        settleLifecycleAction(dispatch, started.success, LifecycleState::Running, LifecycleState::Stopped);
+        return;
+    }
+
+    const StdLogosResult stopped = stopPrepared();
+    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Running);
+}
+
 std::string LogosBlockchainModule::nodeAction(const std::string& request) {
     const auto rejected = [this](const std::string& code, const std::string& message) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
@@ -1334,6 +1395,7 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
         return rejected("invalid_request", "Stop does not accept parameters.");
     }
 
+    joinSettledLifecycleWorker();
     const LifecycleDispatch dispatch = beginLifecycleAction(
         action,
         operation,
@@ -1349,37 +1411,35 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
         return dispatch.acknowledgement;
     }
 
-    if (action == "initialize") {
-        const std::string existing_config_path =
-            existingRegularFilePath(lifecycleInitializationConfigPath(initialization_config));
-        StdLogosResult initialized = existing_config_path.empty() ? generate_user_config(initialization_config)
-                                                                  : result::ok(existing_config_path);
-        std::string generated_config_path;
-        if (initialized.success) {
-            generated_config_path = initialized.value.get<std::string>();
-            if (generated_config_path.empty()) {
-                initialized = result::err("Generated configuration path is unavailable.");
+    const auto settle_worker_failure = [this, dispatch, action] {
+        settleLifecycleAction(
+            dispatch,
+            false,
+            action == "initialize" ? LifecycleState::Uninitialized : LifecycleState::Stopped,
+            action == "stop" ? LifecycleState::Running : LifecycleState::Uninitialized,
+            "lifecycle_worker_failed"
+        );
+    };
+    try {
+        std::thread worker(
+            [this,
+             dispatch,
+             initialization_config = std::move(initialization_config),
+             deployment = std::move(deployment),
+             settle_worker_failure] {
+                try {
+                    dispatchLifecycleAction(dispatch, initialization_config, deployment);
+                } catch (const std::exception&) {
+                    settle_worker_failure();
+                } catch (...) {
+                    settle_worker_failure();
+                }
             }
-        }
-        if (initialized.success) {
-            std::lock_guard<std::mutex> lock(lifecycleMutex);
-            if (activeLifecycleGeneration == dispatch.generation) {
-                lifecycleConfigPath = generated_config_path;
-                persistLifecycleConfigLocked();
-            }
-        }
-        settleLifecycleAction(dispatch, initialized.success, LifecycleState::Stopped, LifecycleState::Uninitialized);
-    } else if (action == "start") {
-        std::string config_path;
-        {
-            std::lock_guard<std::mutex> lock(lifecycleMutex);
-            config_path = lifecycleConfigPath;
-        }
-        const StdLogosResult started = startPrepared(config_path, deployment);
-        settleLifecycleAction(dispatch, started.success, LifecycleState::Running, LifecycleState::Stopped);
-    } else {
-        const StdLogosResult stopped = stopPrepared();
-        settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Running);
+        );
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        lifecycleWorker = std::move(worker);
+    } catch (const std::exception&) {
+        settle_worker_failure();
     }
     return dispatch.acknowledgement;
 }

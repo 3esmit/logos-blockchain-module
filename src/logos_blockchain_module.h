@@ -4,6 +4,7 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -255,6 +256,7 @@ private:
     std::string lifecycleConfigPath;
     std::unordered_map<std::string, LifecycleOperation> lifecycleOperations;
     std::deque<std::string> completedLifecycleOperationIds;
+    std::thread lifecycleWorker;
 
     LifecycleDispatch beginLifecycleAction(
         const std::string& action,
@@ -284,6 +286,12 @@ private:
     ) const;
     void emitLifecycleEvents(const std::vector<std::string>& events);
     void rememberCompletedLifecycleOperationLocked(const std::string& operation_id);
+    void joinSettledLifecycleWorker();
+    void dispatchLifecycleAction(
+        const LifecycleDispatch& dispatch,
+        const std::string& initialization_config,
+        const std::string& deployment
+    );
 
     [[nodiscard]] std::string lifecycleInitializationConfigPath(const std::string& config) const;
     [[nodiscard]] std::string restoredLifecycleConfigPath() const;

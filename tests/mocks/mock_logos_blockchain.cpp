@@ -4,9 +4,12 @@
 
 #include <logos_clib_mock.h>
 #include <logos_blockchain.h>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Captures the paths passed to the most recent generate_user_config call so tests
@@ -24,6 +27,8 @@ uint64_t g_lastFinalizedBlocksRangeLimit = 0;
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
 static BlockCallback s_blockCallback = nullptr;
+static std::atomic<bool> s_blockStart{false};
+static std::atomic<bool> s_startEntered{false};
 static std::vector<std::string> s_mockGetBlockResponses;
 static size_t s_nextMockGetBlockResponse = 0;
 
@@ -35,6 +40,19 @@ void set_mock_get_block_responses(std::vector<std::string> responses) {
 void clear_mock_get_block_responses() {
     s_mockGetBlockResponses.clear();
     s_nextMockGetBlockResponse = 0;
+}
+
+void set_mock_start_blocked(const bool blocked) {
+    s_blockStart.store(blocked);
+}
+
+void reset_mock_start_control() {
+    s_blockStart.store(false);
+    s_startEntered.store(false);
+}
+
+bool mock_start_entered() {
+    return s_startEntered.load();
 }
 
 void trigger_mock_new_block(const char* block_json) {
@@ -76,6 +94,9 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
 
 NodeResult start_lb_node(const char* config_path, const char* deployment) {
     LOGOS_CMOCK_RECORD("start_lb_node");
+    s_startEntered.store(true);
+    while (s_blockStart.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     int ok = LOGOS_CMOCK_RETURN(int, "start_lb_node");
     NodeResult result;
     result.value = ok ? reinterpret_cast<LogosBlockchainNode*>(&s_fakeNode) : nullptr;
