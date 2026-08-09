@@ -1425,7 +1425,8 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 StdLogosResult LogosBlockchainModule::stopPrepared(
     bool* shutdown_attempted,
     const LifecycleDispatch* deferred_dispatch,
-    bool* shutdown_deferred
+    bool* shutdown_deferred,
+    const bool defer_nonreentrant
 ) {
     if (shutdown_attempted) {
         *shutdown_attempted = false;
@@ -1460,12 +1461,25 @@ StdLogosResult LogosBlockchainModule::stopPrepared(
     if (shutdown_attempted) {
         *shutdown_attempted = true;
     }
+    std::optional<DeferredLifecycle> deferred_lifecycle;
+    if (deferred_dispatch) {
+        deferred_lifecycle = DeferredLifecycle{*deferred_dispatch};
+    }
     if (callback_reentrant) {
         std::lock_guard<std::mutex> lock(lifetime->mutex);
         lifetime->deferredNode = node_to_shutdown;
-        if (deferred_dispatch) {
-            lifetime->deferredLifecycle = DeferredLifecycle{*deferred_dispatch};
+        lifetime->deferredLifecycle = std::move(deferred_lifecycle);
+        if (shutdown_deferred) {
+            *shutdown_deferred = true;
         }
+        return result::ok();
+    }
+    if (defer_nonreentrant) {
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->shutdownInProgress = true;
+        }
+        dispatchDeferredShutdown(lifetime, node_to_shutdown, std::move(deferred_lifecycle));
         if (shutdown_deferred) {
             *shutdown_deferred = true;
         }
@@ -1720,10 +1734,11 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
         return dispatch.acknowledgement;
     }
 
-    if (action == "stop" && callbackLifetime.get() == active_callback_lifetime) {
+    if (action == "stop") {
         bool shutdown_attempted = false;
         bool shutdown_deferred = false;
-        const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+        const StdLogosResult stopped =
+            stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred, true);
         if (!shutdown_deferred) {
             settleLifecycleAction(
                 dispatch,

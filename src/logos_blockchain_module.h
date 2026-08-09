@@ -334,7 +334,8 @@ private:
     [[nodiscard]] StdLogosResult stopPrepared(
         bool* shutdown_attempted = nullptr,
         const LifecycleDispatch* deferred_dispatch = nullptr,
-        bool* shutdown_deferred = nullptr
+        bool* shutdown_deferred = nullptr,
+        bool defer_nonreentrant = false
     );
 
     [[nodiscard]] static const char* lifecycleStateName(LifecycleState state);
