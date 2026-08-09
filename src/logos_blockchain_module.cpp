@@ -213,23 +213,30 @@ namespace {
             if (comment != std::string::npos) {
                 line.erase(comment);
             }
-            const std::vector<std::string> prefixes = {
-                std::string(key) + ":",
-                "\"" + std::string(key) + "\":",
-                "'" + std::string(key) + "':",
+            const std::vector<std::string> key_tokens = {
+                std::string(key),
+                "\"" + std::string(key) + "\"",
+                "'" + std::string(key) + "'",
             };
             std::string::size_type key_position = std::string::npos;
             std::string::size_type prefix_size = 0;
-            for (const auto& prefix : prefixes) {
-                const auto candidate = line.find(prefix);
+            for (const auto& token : key_tokens) {
+                const auto candidate = line.find(token);
                 if (candidate == std::string::npos ||
                     (candidate > 0 &&
                      (std::isalnum(static_cast<unsigned char>(line[candidate - 1])) ||
                       line[candidate - 1] == '_'))) {
                     continue;
                 }
+                auto colon = candidate + token.size();
+                while (colon < line.size() && std::isspace(static_cast<unsigned char>(line[colon]))) {
+                    ++colon;
+                }
+                if (colon >= line.size() || line[colon] != ':') {
+                    continue;
+                }
                 key_position = candidate;
-                prefix_size = prefix.size();
+                prefix_size = colon - candidate + 1;
                 break;
             }
             if (key_position == std::string::npos) {

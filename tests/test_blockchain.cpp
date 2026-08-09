@@ -1761,6 +1761,25 @@ LOGOS_TEST(blend_join_accepts_quoted_public_key_configuration) {
     delete module;
 }
 
+LOGOS_TEST(blend_join_accepts_whitespace_before_mapping_colon) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning : " + VALID_HEX + "\n  BlendZk : " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
 // Explorer
 
 LOGOS_TEST(get_block_returns_json_on_success) {
