@@ -1170,11 +1170,15 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 
     const std::string message = operation_status::take_message(subscribe_status);
     s_instance = nullptr;
-    OperationStatus stop_status = shutdown_node(node);
+    // shutdown_node consumes the node handle even when shutdown reports an
+    // error. Clear both aliases before dispatch so a later start or teardown
+    // cannot reuse the consumed pointer.
+    LogosBlockchainNode* node_to_shutdown = node;
+    node = nullptr;
+    OperationStatus stop_status = shutdown_node(node_to_shutdown);
     if (!is_ok(&stop_status)) {
         (void)operation_status::take_message(stop_status);
     }
-    node = nullptr;
     return result::err(
         message.empty() ? "Could not subscribe to block events." : "Could not subscribe to block events: " + message
     );

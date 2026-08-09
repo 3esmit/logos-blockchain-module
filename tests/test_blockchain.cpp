@@ -494,6 +494,26 @@ LOGOS_TEST(node_action_reports_safe_start_and_stop_failures) {
     LOGOS_ASSERT_TRUE(second_stop.error.find("not running") != std::string::npos);
 }
 
+LOGOS_TEST(start_subscription_failure_clears_consumed_node_handle) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(1);
+    t.mockCFunction("shutdown_node").returns(1);
+
+    const StdLogosResult failed = module.start(tmp_dir.filePath("node.json"), "");
+    LOGOS_ASSERT_FALSE(failed.success);
+    LOGOS_ASSERT_TRUE(failed.error.find("subscribe") != std::string::npos);
+
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    const StdLogosResult retried = module.start(tmp_dir.filePath("node.json"), "");
+    LOGOS_ASSERT_TRUE(retried.success);
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("start_lb_node"), 2);
+    t.mockCFunction("shutdown_node").returns(0);
+    LOGOS_ASSERT_TRUE(module.stop().success);
+}
+
 // The mock records the paths handed to the FFI (see mock_logos_blockchain.cpp).
 extern std::string g_lastGeneratedOutput;
 extern std::string g_lastGeneratedStatePath;
