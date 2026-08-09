@@ -442,6 +442,7 @@ namespace {
         std::string output_data;
         uint16_t net_port_val;
         uint16_t blend_port_val;
+        bool skip_ibd_val = false;
         std::string http_addr_data;
         std::string external_address_data;
         std::string state_path_data;
@@ -540,7 +541,6 @@ namespace {
             // The C API accepts `skip_ibd`, while Inspector also accepts the
             // legacy `ibd` JSON key. Preserve both forms and explicitly
             // default to IBD so generated Testnet configuration synchronizes.
-            bool skip_ibd_val = false;
             if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
                 skip_ibd_val = args["skip_ibd"].get<bool>();
             } else if (args.contains("ibd") && args["ibd"].is_boolean()) {
