@@ -29,6 +29,9 @@ static bool contains(const std::string& s, const std::string& sub) {
 
 void reset_node_changed_events();
 std::vector<std::string> node_changed_events();
+using NewBlockHook = void (*)();
+void set_new_block_hook(NewBlockHook hook);
+void trigger_mock_new_block(const char* block_json);
 void reset_mock_start_control();
 void set_mock_start_blocked(bool blocked);
 bool mock_start_entered();
@@ -84,6 +87,14 @@ static std::string test_hex_id(const size_t value) {
     char id[65] = {};
     std::snprintf(id, sizeof(id), "%064zx", value);
     return id;
+}
+
+static LogosBlockchainModule* g_callbackStopModule = nullptr;
+
+static void stop_from_new_block_callback() {
+    if (g_callbackStopModule) {
+        (void)g_callbackStopModule->stop();
+    }
 }
 
 // RAII wrapper for a temporary directory (removed on destruction).
@@ -343,6 +354,28 @@ LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
     LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
     LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
     LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
+}
+
+LOGOS_TEST(block_callback_stop_defers_shutdown_until_callback_returns) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_callbackStopModule = &module;
+    set_new_block_hook(stop_from_new_block_callback);
+    trigger_mock_new_block(R"({"slot":1})");
+    set_new_block_hook(nullptr);
+    g_callbackStopModule = nullptr;
+
+    for (int attempt = 0; attempt < 500 && !t.cFunctionCalled("shutdown_node"); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
 }
 
 LOGOS_TEST(node_action_start_acknowledges_before_blocking_node_start_finishes) {

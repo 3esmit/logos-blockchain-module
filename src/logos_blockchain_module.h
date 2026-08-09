@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -261,9 +262,12 @@ private:
     std::unordered_map<std::string, LifecycleOperation> lifecycleOperations;
     std::deque<std::string> completedLifecycleOperationIds;
     std::thread lifecycleWorker;
-    mutable std::mutex callbackMutex;
-    mutable std::condition_variable callbackCondition;
-    std::size_t callbacksInFlight = 0;
+    struct CallbackLifetime {
+        mutable std::mutex mutex;
+        mutable std::condition_variable condition;
+        std::size_t inFlight = 0;
+    };
+    std::shared_ptr<CallbackLifetime> callbackLifetime = std::make_shared<CallbackLifetime>();
 
     // Capture explicit identities at node startup; do not reread a mutable
     // configuration file while a node is running.
@@ -308,7 +312,8 @@ private:
     [[nodiscard]] std::string lifecycleInitializationConfigPath(const std::string& config) const;
     [[nodiscard]] std::string restoredLifecycleConfigPath() const;
     void persistLifecycleConfigLocked();
-    void waitForCallbacks();
+    void waitForCallbacks(const std::shared_ptr<CallbackLifetime>& lifetime);
+    static void shutdownNodeAsync(LogosBlockchainNode* node_to_shutdown);
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
     [[nodiscard]] StdLogosResult stopPrepared(bool* shutdown_attempted = nullptr);
