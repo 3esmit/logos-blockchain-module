@@ -78,6 +78,7 @@ namespace {
     constexpr size_t MAX_PERSISTED_LIFECYCLE_STATE_BYTES = 4 * 1024;
     std::atomic<std::uint64_t> node_lifecycle_instance_counter{0};
     thread_local const void* active_callback_lifetime = nullptr;
+    thread_local const void* active_settlement_lifetime = nullptr;
 
     std::int64_t nodeLifecycleTimestampMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -772,7 +773,7 @@ void LogosBlockchainModule::waitForCallbacks(const std::shared_ptr<CallbackLifet
 }
 
 void LogosBlockchainModule::waitForDeferredShutdown(const std::shared_ptr<CallbackLifetime>& lifetime) {
-    if (!lifetime || lifetime.get() == active_callback_lifetime) {
+    if (!lifetime || lifetime.get() == active_callback_lifetime || lifetime.get() == active_settlement_lifetime) {
         return;
     }
     std::unique_lock<std::mutex> lock(lifetime->mutex);
@@ -811,15 +812,15 @@ void LogosBlockchainModule::dispatchDeferredShutdown(
             lifetime->condition.notify_all();
         }
         if (lifecycle && owner) {
-            const void* previous = active_callback_lifetime;
-            active_callback_lifetime = lifetime.get();
+            const void* previous = active_settlement_lifetime;
+            active_settlement_lifetime = lifetime.get();
             owner->settleLifecycleAction(
                 lifecycle->dispatch,
                 shutdown_success,
                 LifecycleState::Stopped,
                 LifecycleState::Stopped
             );
-            active_callback_lifetime = previous;
+            active_settlement_lifetime = previous;
         }
         {
             std::lock_guard<std::mutex> lock(lifetime->mutex);
