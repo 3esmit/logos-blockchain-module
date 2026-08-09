@@ -64,7 +64,7 @@ typedef struct {
     const char* state_path;
     const char* storage_path;
     const char* logs_path;
-    const bool* ibd;
+    const bool* skip_ibd;
     const char* log_filter;
     const char* kms_file;
 } GenerateConfigArgs;
@@ -153,7 +153,7 @@ typedef struct { Hash value; OperationStatus error; } FfiChannelDepositResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
 typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResult;
 typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableVouchersResult;
-typedef struct { Hash value; OperationStatus error; } BlendHashResult;
+typedef struct { Hash value; OperationStatus error; } FfiStatusResult_DeclarationId;
 typedef struct { char* value; OperationStatus error; } StringResult;
 typedef StringResult FfiGetTimeInfoResult;
 typedef StringResult FfiGetFinalizedBlocksRangeResult;
@@ -169,7 +169,7 @@ bool is_ok(const OperationStatus* status);
 // Lifecycle
 OperationStatus generate_user_config(GenerateConfigArgs args);
 NodeResult start_lb_node(const char* config_path, const char* deployment);
-OperationStatus stop_node(LogosBlockchainNode* node);
+OperationStatus shutdown_node(LogosBlockchainNode* node);
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback);
 
 // Config management
@@ -226,13 +226,10 @@ FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, con
 OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers);
 
 // Blend
-BlendHashResult blend_join_as_core_node(
+FfiStatusResult_DeclarationId blend_join_as_core_node(
     LogosBlockchainNode* node,
-    const uint8_t* provider_id,
-    const uint8_t* zk_id,
-    const uint8_t* locked_note_id,
-    const char** locators,
-    size_t locators_count);
+    const char* locator,
+    const uint8_t* locked_note_id);
 
 // Explorer
 StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id);

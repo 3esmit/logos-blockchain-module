@@ -70,7 +70,7 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
     g_lastGeneratedStatePath = args.state_path ? args.state_path : "<null>";
     g_lastGeneratedStoragePath = args.storage_path ? args.storage_path : "<null>";
     g_lastGeneratedLogsPath = args.logs_path ? args.logs_path : "<null>";
-    g_lastGeneratedIbd = args.ibd ? (*args.ibd ? 1 : 0) : -1;
+    g_lastGeneratedIbd = args.skip_ibd ? (*args.skip_ibd ? 0 : 1) : -1;
     return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config"));
 }
 
@@ -83,10 +83,10 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
     return result;
 }
 
-OperationStatus stop_node(LogosBlockchainNode* node) {
-    LOGOS_CMOCK_RECORD("stop_node");
+OperationStatus shutdown_node(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("shutdown_node");
     s_blockCallback = nullptr;
-    return make_status(LOGOS_CMOCK_RETURN(int, "stop_node"));
+    return make_status(LOGOS_CMOCK_RETURN(int, "shutdown_node"));
 }
 
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path) {
@@ -297,16 +297,13 @@ FfiChannelDepositResult channel_deposit_with_notes(
     return result;
 }
 
-BlendHashResult blend_join_as_core_node(
+FfiStatusResult_DeclarationId blend_join_as_core_node(
     LogosBlockchainNode* node,
-    const uint8_t* provider_id,
-    const uint8_t* zk_id,
-    const uint8_t* locked_note_id,
-    const char** locators,
-    size_t locators_count)
+    const char* locator,
+    const uint8_t* locked_note_id)
 {
     LOGOS_CMOCK_RECORD("blend_join_as_core_node");
-    BlendHashResult result;
+    FfiStatusResult_DeclarationId result;
     memset(result.value, 0xCD, sizeof(Hash));
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_join_as_core_node_error"));
     return result;

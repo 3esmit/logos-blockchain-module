@@ -447,7 +447,6 @@ namespace {
         std::string state_path_data;
         std::string storage_path_data;
         std::string logs_path_data;
-        bool ibd_val = true;
         std::string log_filter_data;
         std::string kms_file_data;
 
@@ -538,16 +537,16 @@ namespace {
                 ffi_args.logs_path = nullptr;
             }
 
-            // The release C API accepts `ibd`, while Inspector's established
-            // JSON contract uses the inverse `skip_ibd`. Preserve both input
-            // forms and explicitly default to IBD so a generated Testnet
-            // configuration synchronizes rather than remaining at genesis.
+            // The C API accepts `skip_ibd`, while Inspector also accepts the
+            // legacy `ibd` JSON key. Preserve both forms and explicitly
+            // default to IBD so generated Testnet configuration synchronizes.
+            bool skip_ibd_val = false;
             if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
-                ibd_val = !args["skip_ibd"].get<bool>();
+                skip_ibd_val = args["skip_ibd"].get<bool>();
             } else if (args.contains("ibd") && args["ibd"].is_boolean()) {
-                ibd_val = args["ibd"].get<bool>();
+                skip_ibd_val = !args["ibd"].get<bool>();
             }
-            ffi_args.ibd = &ibd_val;
+            ffi_args.skip_ibd = &skip_ibd_val;
 
             // log_filter (string -> const char*)
             if (args.contains("log_filter") && args["log_filter"].is_string()) {
@@ -610,7 +609,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
     // the existing best-effort cleanup without emitting into a dying context.
     s_instance = nullptr;
     if (node) {
-        OperationStatus status = stop_node(node);
+        OperationStatus status = shutdown_node(node);
         if (!is_ok(&status)) {
             (void)operation_status::take_message(status);
         }
@@ -1152,7 +1151,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 
     const std::string message = operation_status::take_message(subscribe_status);
     s_instance = nullptr;
-    OperationStatus stop_status = stop_node(node);
+    OperationStatus stop_status = shutdown_node(node);
     if (!is_ok(&stop_status)) {
         (void)operation_status::take_message(stop_status);
     }
@@ -1167,7 +1166,7 @@ StdLogosResult LogosBlockchainModule::stopPrepared() {
         return result::err("The node is not running.");
     }
 
-    OperationStatus status = stop_node(node);
+    OperationStatus status = shutdown_node(node);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
     }
@@ -1999,19 +1998,21 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    std::vector<const char*> locators_ptrs;
-    locators_ptrs.reserve(locators.size());
-    for (const std::string& locator : locators) {
-        locators_ptrs.push_back(locator.c_str());
+    if (locators.size() > 1) {
+        return result::err("Only one locator is supported by the blockchain C API.");
     }
+
+    // The current C API derives provider and ZK identities from node state.
+    // Keep the legacy module arguments validated for callers, but forward the
+    // first locator through the narrowed ABI.
+    const char* locator = locators.empty() ? "" : locators.front().c_str();
+    static_cast<void>(provider_id_bytes);
+    static_cast<void>(zk_id_bytes);
 
     auto [value, error] = ::blend_join_as_core_node(
         node,
-        provider_id_bytes.data(),
-        zk_id_bytes.data(),
-        locked_note_id_bytes.data(),
-        locators_ptrs.data(),
-        locators_ptrs.size()
+        locator,
+        locked_note_id_bytes.data()
     );
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));
