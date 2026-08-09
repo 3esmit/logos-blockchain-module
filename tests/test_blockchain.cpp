@@ -4,6 +4,7 @@
 #include <logos_test.h>
 #include "logos_blockchain_module.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -27,13 +29,31 @@ static bool contains(const std::string& s, const std::string& sub) {
 
 void reset_node_changed_events();
 std::vector<std::string> node_changed_events();
+void reset_mock_start_control();
+void set_mock_start_blocked(bool blocked);
+bool mock_start_entered();
 
 static json read_node_status(LogosBlockchainModule& module) {
     return json::parse(module.nodeStatus());
 }
 
+static json wait_for_lifecycle_terminal(LogosBlockchainModule& module) {
+    json status;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        status = read_node_status(module);
+        if (status.at("pending_operation").is_null())
+            return status;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
+    return status;
+}
+
 static json invoke_node_action(LogosBlockchainModule& module, const json& request) {
-    return json::parse(module.nodeAction(request.dump()));
+    const json acknowledgement = json::parse(module.nodeAction(request.dump()));
+    if (acknowledgement.value("accepted", false) && !acknowledgement.value("duplicate", false))
+        (void)wait_for_lifecycle_terminal(module);
+    return acknowledgement;
 }
 
 static json lifecycle_command(
@@ -312,6 +332,57 @@ LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
     LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
     LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
     LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
+}
+
+LOGOS_TEST(node_action_start_acknowledges_before_blocking_node_start_finishes) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config").returns(0);
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+
+    LOGOS_ASSERT_TRUE(invoke_node_action(
+                          module,
+                          lifecycle_command(
+                              "bedrock-async-start-initialize",
+                              "initialize",
+                              { {"config", json({{"output", tmp_dir.filePath("node.json")}}).dump()} }
+                          )
+    )
+                          .at("accepted")
+                          .get<bool>());
+
+    reset_node_changed_events();
+    reset_mock_start_control();
+    set_mock_start_blocked(true);
+    const auto started_at = std::chrono::steady_clock::now();
+    const json acknowledgement = json::parse(
+        module.nodeAction(lifecycle_command("bedrock-async-start", "start").dump())
+    );
+    const auto acknowledgement_time = std::chrono::steady_clock::now() - started_at;
+    LOGOS_ASSERT_TRUE(acknowledgement.at("accepted").get<bool>());
+    LOGOS_ASSERT_TRUE(acknowledgement_time < std::chrono::milliseconds(500));
+
+    const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!mock_start_entered() && std::chrono::steady_clock::now() < start_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    LOGOS_ASSERT_TRUE(mock_start_entered());
+
+    const json pending = read_node_status(module);
+    LOGOS_ASSERT_EQ(pending.at("state").get<std::string>(), std::string("starting"));
+    LOGOS_ASSERT_FALSE(pending.at("pending_operation").is_null());
+
+    set_mock_start_blocked(false);
+    const json settled = wait_for_lifecycle_terminal(module);
+    LOGOS_ASSERT_EQ(settled.at("state").get<std::string>(), std::string("running"));
+    LOGOS_ASSERT_TRUE(settled.at("pending_operation").is_null());
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
+    LOGOS_ASSERT_EQ(events.at(0).at("phase").get<std::string>(), std::string("accepted"));
+    LOGOS_ASSERT_EQ(events.at(1).at("phase").get<std::string>(), std::string("settled"));
+    LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
+    reset_mock_start_control();
 }
 
 LOGOS_TEST(node_action_restarts_a_legacy_started_node) {
