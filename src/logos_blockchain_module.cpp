@@ -1185,12 +1185,16 @@ StdLogosResult LogosBlockchainModule::stopPrepared() {
         return result::err("The node is not running.");
     }
 
-    OperationStatus status = shutdown_node(node);
+    // shutdown_node consumes the node handle even when shutdown reports an
+    // error. Clear both aliases before dispatch so no later operation can use
+    // the consumed pointer or publish block events into this module instance.
+    LogosBlockchainNode* node_to_shutdown = node;
+    node = nullptr;
+    s_instance = nullptr;
+    OperationStatus status = shutdown_node(node_to_shutdown);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
     }
-    s_instance = nullptr;
-    node = nullptr;
     return result::ok();
 }
 
@@ -1214,7 +1218,9 @@ StdLogosResult LogosBlockchainModule::stop() {
     }
     emitLifecycleEvents(dispatch.events);
     const StdLogosResult stopped = stopPrepared();
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, dispatch.previousState);
+    // The consumed handle cannot be retried after a shutdown error. Report a
+    // terminal stopped state with the error retained in the lifecycle snapshot.
+    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Stopped);
     return stopped;
 }
 
@@ -1262,7 +1268,9 @@ void LogosBlockchainModule::dispatchLifecycleAction(
     }
 
     const StdLogosResult stopped = stopPrepared();
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Running);
+    // The consumed handle cannot be retried after a shutdown error. Report a
+    // terminal stopped state with the error retained in the lifecycle snapshot.
+    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Stopped);
 }
 
 std::string LogosBlockchainModule::nodeAction(const std::string& request) {

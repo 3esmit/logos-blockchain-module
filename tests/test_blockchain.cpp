@@ -455,7 +455,7 @@ LOGOS_TEST(node_action_rejects_stale_and_reused_operation_ids_without_dispatch) 
     LOGOS_ASSERT_TRUE(module.stop().success);
 }
 
-LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_node) {
+LOGOS_TEST(node_action_reports_safe_start_and_stop_failures) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmp_dir;
     LogosBlockchainModule module;
@@ -487,7 +487,11 @@ LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_no
     LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
     t.mockCFunction("shutdown_node").returns(1);
     LOGOS_ASSERT_FALSE(module.stop().success);
-    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
+
+    const auto second_stop = module.stop();
+    LOGOS_ASSERT_FALSE(second_stop.success);
+    LOGOS_ASSERT_TRUE(second_stop.error.find("not running") != std::string::npos);
 }
 
 // The mock records the paths handed to the FFI (see mock_logos_blockchain.cpp).
