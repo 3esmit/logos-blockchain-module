@@ -382,6 +382,36 @@ LOGOS_TEST(block_callback_stop_defers_shutdown_until_callback_returns) {
     LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
 }
 
+LOGOS_TEST(block_callback_stop_reports_deferred_shutdown_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(1);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_callbackStopModule = &module;
+    set_new_block_hook(stop_from_new_block_callback);
+    trigger_mock_new_block(R"({"slot":2})");
+    set_new_block_hook(nullptr);
+    g_callbackStopModule = nullptr;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    json status;
+    do {
+        status = read_node_status(module);
+        if (status.at("pending_operation").is_null())
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
+    LOGOS_ASSERT_EQ(status.at("last_error").at("code").get<std::string>(), std::string("stop_failed"));
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.back().at("outcome").get<std::string>(), std::string("failed"));
+}
+
 LOGOS_TEST(node_action_start_acknowledges_before_blocking_node_start_finishes) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmp_dir;

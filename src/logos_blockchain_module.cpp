@@ -793,7 +793,8 @@ void LogosBlockchainModule::dispatchDeferredShutdown(
         }
 
         OperationStatus status = shutdown_node(node_to_shutdown);
-        if (!is_ok(&status)) {
+        const bool shutdown_success = is_ok(&status);
+        if (!shutdown_success) {
             (void)operation_status::take_message(status);
         }
 
@@ -807,7 +808,7 @@ void LogosBlockchainModule::dispatchDeferredShutdown(
             active_callback_lifetime = lifetime.get();
             owner->settleLifecycleAction(
                 lifecycle->dispatch,
-                true,
+                shutdown_success,
                 LifecycleState::Stopped,
                 LifecycleState::Stopped
             );
