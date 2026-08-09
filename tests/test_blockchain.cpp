@@ -1655,6 +1655,29 @@ LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
     delete module;
 }
 
+LOGOS_TEST(blend_join_accepts_runtime_kms_identity_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    // Production node configs expose KMS key IDs. The running C binding
+    // resolves those IDs to the public identities used by the join request.
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "blend: {non_ephemeral_signing_key_id: signing-kms-id, "
+              "core: {zk: {secret_key_kms_id: zk-kms-id}}}\n";
+    config.close();
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
 // Explorer
 
 LOGOS_TEST(get_block_returns_json_on_success) {

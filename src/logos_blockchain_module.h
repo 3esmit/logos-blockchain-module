@@ -238,6 +238,9 @@ private:
 
     LogosBlockchainNode* node = nullptr;
 
+    // Serializes every call that borrows the opaque node handle with lifecycle
+    // start/stop/destruction, so shutdown cannot consume it mid-operation.
+    mutable std::recursive_mutex nodeMutex;
     mutable std::mutex lifecycleMutex;
     LifecycleState lifecycleState = LifecycleState::Uninitialized;
     std::uint64_t lifecycleGeneration = 0;

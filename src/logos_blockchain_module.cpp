@@ -205,18 +205,25 @@ namespace {
             return {};
         }
 
-        const std::string prefix = std::string(key) + ":";
         std::string line;
         while (std::getline(input, line)) {
-            boost::algorithm::trim(line);
-            if (line.rfind(prefix, 0) != 0) {
+            const auto comment = line.find('#');
+            if (comment != std::string::npos) {
+                line.erase(comment);
+            }
+            const std::string prefix = std::string(key) + ":";
+            const auto key_position = line.find(prefix);
+            if (key_position == std::string::npos ||
+                (key_position > 0 &&
+                 (std::isalnum(static_cast<unsigned char>(line[key_position - 1])) ||
+                  line[key_position - 1] == '_'))) {
                 continue;
             }
 
-            std::string value = line.substr(prefix.size());
-            const auto comment = value.find('#');
-            if (comment != std::string::npos) {
-                value.erase(comment);
+            std::string value = line.substr(key_position + prefix.size());
+            const auto delimiter = value.find_first_of(",}");
+            if (delimiter != std::string::npos) {
+                value.erase(delimiter);
             }
             boost::algorithm::trim(value);
             if (value.size() >= 2 &&
@@ -227,6 +234,10 @@ namespace {
             return value;
         }
         return {};
+    }
+
+    bool has_configured_blend_key(const std::string& config_path, const char* key) {
+        return !configured_blend_public_key(config_path, key).empty();
     }
 
     // Parse arbitrary-length hex (optional 0x prefix) into bytes. Unlike
@@ -648,6 +659,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     s_instance = nullptr;
     if (node) {
         OperationStatus status = shutdown_node(node);
@@ -913,6 +925,7 @@ void LogosBlockchainModule::persistLifecycleConfigLocked() {
 }
 
 void LogosBlockchainModule::onContextReady() {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     std::lock_guard<std::mutex> lock(lifecycleMutex);
     if (lifecycleState != LifecycleState::Uninitialized || lifecyclePending || node || !lifecycleConfigPath.empty())
         return;
@@ -1165,6 +1178,7 @@ void LogosBlockchainModule::settleLifecycleAction(
 }
 
 StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_path, const std::string& deployment) {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (node) {
         return result::err("The node is already running.");
     }
@@ -1219,6 +1233,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 }
 
 StdLogosResult LogosBlockchainModule::stopPrepared() {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1711,6 +1726,7 @@ StdLogosResult LogosBlockchainModule::get_peer_id(const std::string& config_path
 // Wallet
 
 StdLogosResult LogosBlockchainModule::wallet_get_balance(const std::string& address_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     fprintf(stderr, "wallet_get_balance: address_hex=%s\n", address_hex.c_str());
     if (!node) {
         return result::err("The node is not running.");
@@ -1736,6 +1752,7 @@ StdLogosResult LogosBlockchainModule::wallet_transfer_funds(
     const std::string& amount,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1797,6 +1814,7 @@ StdLogosResult LogosBlockchainModule::wallet_transfer_funds(
 }
 
 StdLogosResult LogosBlockchainModule::wallet_get_known_addresses() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         fprintf(stderr, "Could not execute the operation: The node is not running.\n");
         return result::err("The node is not running.");
@@ -1830,6 +1848,7 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
     const std::string& wallet_address_hex,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1875,6 +1894,7 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
 }
 
 StdLogosResult LogosBlockchainModule::leader_claim() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1896,6 +1916,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit(
     const std::string& metadata_hex,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1960,6 +1981,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
     const std::string& max_tx_fee,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2048,6 +2070,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
 }
 
 StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2085,6 +2108,7 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     const std::string& locked_note_id_hex,
     const std::vector<std::string>& locators
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2122,13 +2146,25 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     const std::vector<uint8_t> configured_zk_id = parse_address_hex(
         configured_blend_public_key(config_path, "BlendZk")
     );
-    if (configured_provider_id.empty() || configured_zk_id.empty()) {
+    const bool has_explicit_provider_key = has_configured_blend_key(config_path, "BlendSigning");
+    const bool has_explicit_zk_key = has_configured_blend_key(config_path, "BlendZk");
+    const bool has_runtime_provider_key = has_configured_blend_key(config_path, "non_ephemeral_signing_key_id");
+    const bool has_runtime_zk_key = has_configured_blend_key(config_path, "secret_key_kms_id");
+    if ((has_explicit_provider_key && configured_provider_id.empty()) ||
+        (has_explicit_zk_key && configured_zk_id.empty()) ||
+        (!has_explicit_provider_key && !has_runtime_provider_key) ||
+        (!has_explicit_zk_key && !has_runtime_zk_key)) {
         return result::err("Unable to verify Blend identities from the running node configuration.");
     }
-    if (provider_id_bytes != configured_provider_id) {
+    // The current C binding resolves KMS key IDs to public identities inside
+    // the running node. Legacy configs expose those KMS IDs instead of the
+    // resolved public keys, so the binding remains the source of truth for
+    // that representation. Explicit public-key configs can still be checked
+    // before dispatching the join request.
+    if (!configured_provider_id.empty() && provider_id_bytes != configured_provider_id) {
         return result::err("provider_id_hex does not match the running node's BlendSigning identity.");
     }
-    if (zk_id_bytes != configured_zk_id) {
+    if (!configured_zk_id.empty() && zk_id_bytes != configured_zk_id) {
         return result::err("zk_id_hex does not match the running node's BlendZk identity.");
     }
 
@@ -2149,6 +2185,7 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
 // Explorer
 
 StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2171,6 +2208,7 @@ StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex
 }
 
 StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const uint64_t to_slot) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2295,6 +2333,7 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
 }
 
 StdLogosResult LogosBlockchainModule::get_time_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2312,6 +2351,7 @@ StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
     const uint64_t to_slot,
     const uint64_t blocks_limit
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2325,6 +2365,7 @@ StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
 }
 
 StdLogosResult LogosBlockchainModule::get_cryptarchia_headers() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2338,6 +2379,7 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_headers() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_network_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2351,6 +2393,7 @@ StdLogosResult LogosBlockchainModule::get_network_info() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_mantle_metrics() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2364,6 +2407,7 @@ StdLogosResult LogosBlockchainModule::get_mantle_metrics() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2388,6 +2432,7 @@ StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash
 // Cryptarchia
 
 StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
