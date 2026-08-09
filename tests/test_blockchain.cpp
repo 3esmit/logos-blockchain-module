@@ -1569,6 +1569,14 @@ LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n"
+              "  BlendSigning: "
+           << VALID_HEX << "\n"
+              "  BlendZk: "
+           << VALID_HEX << "\n";
+    config.close();
+
     t.mockCFunction("blend_join_as_core_node_error").returns(0);
 
     StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"});
@@ -1587,10 +1595,63 @@ LOGOS_TEST(blend_join_as_core_node_returns_error_on_ffi_failure) {
     auto* module = createStartedModule(t, tmpDir);
     LOGOS_ASSERT_TRUE(module != nullptr);
 
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n"
+              "  BlendSigning: "
+           << VALID_HEX << "\n"
+              "  BlendZk: "
+           << VALID_HEX << "\n";
+    config.close();
+
     t.mockCFunction("blend_join_as_core_node_error").returns(1);
 
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {});
+    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"});
     LOGOS_ASSERT_FALSE(result.success);
+    delete module;
+}
+
+LOGOS_TEST(blend_join_rejects_multiple_locators_without_dropping_input) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n"
+              "  BlendSigning: "
+           << VALID_HEX << "\n"
+              "  BlendZk: "
+           << VALID_HEX << "\n";
+    config.close();
+
+    const StdLogosResult result =
+        module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1", "locator2"});
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "exactly one locator"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n"
+              "  BlendSigning: "
+           << VALID_HEX << "\n"
+              "  BlendZk: "
+           << VALID_HEX << "\n";
+    config.close();
+
+    const StdLogosResult result = module->blend_join_as_core_node(
+        std::string(64, 'b'), VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "BlendSigning identity"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
     delete module;
 }
 

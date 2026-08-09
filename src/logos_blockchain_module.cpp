@@ -195,6 +195,40 @@ namespace {
         }
     }
 
+    std::string configured_blend_public_key(const std::string& config_path, const char* key) {
+        if (config_path.empty() || !key || !*key) {
+            return {};
+        }
+
+        std::ifstream input(config_path, std::ios::binary);
+        if (!input) {
+            return {};
+        }
+
+        const std::string prefix = std::string(key) + ":";
+        std::string line;
+        while (std::getline(input, line)) {
+            boost::algorithm::trim(line);
+            if (line.rfind(prefix, 0) != 0) {
+                continue;
+            }
+
+            std::string value = line.substr(prefix.size());
+            const auto comment = value.find('#');
+            if (comment != std::string::npos) {
+                value.erase(comment);
+            }
+            boost::algorithm::trim(value);
+            if (value.size() >= 2 &&
+                ((value.front() == '\'' && value.back() == '\'') ||
+                 (value.front() == '"' && value.back() == '"'))) {
+                value = value.substr(1, value.size() - 2);
+            }
+            return value;
+        }
+        return {};
+    }
+
     // Parse arbitrary-length hex (optional 0x prefix) into bytes. Unlike
     // parse_address_hex this does not enforce a fixed length; used for the
     // variable-length channel deposit metadata. Returns false on odd length or
@@ -2073,31 +2107,43 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     if (locators.empty()) {
         return result::err("At least one Blend locator is required.");
     }
-
-    // Newer blockchain C bindings derive provider and ZK identities from the
-    // running node configuration and accept one locator per call. Keep the
-    // established module contract by validating both IDs, then retrying each
-    // supplied locator until one succeeds.
-    std::string last_error = "Blend join failed for all supplied locators.";
-    for (const std::string& locator : locators) {
-        auto [value, error] = ::blend_join_as_core_node(
-            node,
-            locator.c_str(),
-            locked_note_id_bytes.data()
-        );
-        if (!is_ok(&error)) {
-            last_error = operation_status::take_message(error);
-            continue;
-        }
-
-        std::string declaration_id = bytes_to_hex(
-            reinterpret_cast<const uint8_t*>(&value), sizeof(value)
-        );
-        fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
-        return result::ok(std::move(declaration_id));
+    if (locators.size() != 1) {
+        return result::err("The current Blend binding accepts exactly one locator per join.");
     }
 
-    return result::err(std::move(last_error));
+    std::string config_path;
+    {
+        std::lock_guard<std::mutex> lock(lifecycleMutex);
+        config_path = lifecycleConfigPath;
+    }
+    const std::vector<uint8_t> configured_provider_id = parse_address_hex(
+        configured_blend_public_key(config_path, "BlendSigning")
+    );
+    const std::vector<uint8_t> configured_zk_id = parse_address_hex(
+        configured_blend_public_key(config_path, "BlendZk")
+    );
+    if (configured_provider_id.empty() || configured_zk_id.empty()) {
+        return result::err("Unable to verify Blend identities from the running node configuration.");
+    }
+    if (provider_id_bytes != configured_provider_id) {
+        return result::err("provider_id_hex does not match the running node's BlendSigning identity.");
+    }
+    if (zk_id_bytes != configured_zk_id) {
+        return result::err("zk_id_hex does not match the running node's BlendZk identity.");
+    }
+
+    auto [value, error] = ::blend_join_as_core_node(
+        node,
+        locators.front().c_str(),
+        locked_note_id_bytes.data()
+    );
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    std::string declaration_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
+    fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
+    return result::ok(std::move(declaration_id));
 }
 
 // Explorer
