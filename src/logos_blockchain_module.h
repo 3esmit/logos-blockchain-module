@@ -301,7 +301,7 @@ private:
     void persistLifecycleConfigLocked();
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
-    [[nodiscard]] StdLogosResult stopPrepared();
+    [[nodiscard]] StdLogosResult stopPrepared(bool* shutdown_attempted = nullptr);
 
     [[nodiscard]] static const char* lifecycleStateName(LifecycleState state);
     [[nodiscard]] static std::vector<std::string> lifecycleActions(LifecycleState state);

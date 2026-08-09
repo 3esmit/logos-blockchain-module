@@ -750,6 +750,16 @@ LOGOS_TEST(stop_without_node_returns_1) {
     LOGOS_ASSERT_FALSE(module.stop().success);
 }
 
+LOGOS_TEST(stop_without_node_preserves_uninitialized_lifecycle_state) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    LOGOS_ASSERT_FALSE(module.stop().success);
+    const auto status = json::parse(module.nodeStatus());
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), "uninitialized");
+    LOGOS_ASSERT_EQ(status.at("supported_actions").at(0).get<std::string>(), "initialize");
+}
+
 LOGOS_TEST(wallet_get_balance_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;

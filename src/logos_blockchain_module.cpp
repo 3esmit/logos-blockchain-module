@@ -1273,7 +1273,10 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     );
 }
 
-StdLogosResult LogosBlockchainModule::stopPrepared() {
+StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
+    if (shutdown_attempted) {
+        *shutdown_attempted = false;
+    }
     LogosBlockchainNode* node_to_shutdown = nullptr;
     {
         std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
@@ -1291,6 +1294,9 @@ StdLogosResult LogosBlockchainModule::stopPrepared() {
         s_instance = nullptr;
     }
 
+    if (shutdown_attempted) {
+        *shutdown_attempted = true;
+    }
     OperationStatus status = shutdown_node(node_to_shutdown);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
@@ -1317,10 +1323,17 @@ StdLogosResult LogosBlockchainModule::stop() {
         return result::err("A lifecycle operation is already in progress.");
     }
     emitLifecycleEvents(dispatch.events);
-    const StdLogosResult stopped = stopPrepared();
+    bool shutdown_attempted = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted);
     // The consumed handle cannot be retried after a shutdown error. Report a
-    // terminal stopped state with the error retained in the lifecycle snapshot.
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Stopped);
+    // terminal stopped state only after shutdown consumed a handle. If no
+    // handle existed, preserve the state that preceded this legacy request.
+    settleLifecycleAction(
+        dispatch,
+        stopped.success,
+        LifecycleState::Stopped,
+        shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+    );
     return stopped;
 }
 
@@ -1367,10 +1380,17 @@ void LogosBlockchainModule::dispatchLifecycleAction(
         return;
     }
 
-    const StdLogosResult stopped = stopPrepared();
+    bool shutdown_attempted = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted);
     // The consumed handle cannot be retried after a shutdown error. Report a
-    // terminal stopped state with the error retained in the lifecycle snapshot.
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Stopped);
+    // terminal stopped state only after shutdown consumed a handle. A stale
+    // lifecycle snapshot with no live handle remains in its previous state.
+    settleLifecycleAction(
+        dispatch,
+        stopped.success,
+        LifecycleState::Stopped,
+        shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+    );
 }
 
 std::string LogosBlockchainModule::nodeAction(const std::string& request) {
