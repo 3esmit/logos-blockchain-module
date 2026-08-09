@@ -310,6 +310,7 @@ private:
 
     // Static instance for C callback (C API doesn't support user data)
     static LogosBlockchainModule* s_instance;
+    static std::mutex s_instanceMutex;
 
     // C-compatible callback function
     static void on_new_block_callback(const char* block);

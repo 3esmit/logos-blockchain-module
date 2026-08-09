@@ -24,6 +24,7 @@ using json = nlohmann::json;
 
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
+std::mutex LogosBlockchainModule::s_instanceMutex;
 
 namespace operation_status {
     // Takes the Rust-allocated message out of an OperationStatus and frees it.
@@ -615,7 +616,14 @@ namespace {
 } // namespace
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
-    if (!s_instance || !block) {
+    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+    LogosBlockchainModule* instance = s_instance;
+    if (!instance || !block) {
+        return;
+    }
+
+    std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
+    if (!instance->node) {
         return;
     }
 
@@ -628,14 +636,14 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
 
         json event;
         event["block"] = std::move(parsed_block);
-        s_instance->newBlock(event.dump());
+        instance->newBlock(event.dump());
     } catch (const json::parse_error& error) {
         // Keep the legacy fallback for an invalid payload, but never emit the
         // full payload to stderr: a busy block stream must not stall on logs.
         fprintf(stderr, "Failed to parse new block event JSON: %s\n", error.what());
         json event;
         event["block"] = std::string(block);
-        s_instance->newBlock(event.dump());
+        instance->newBlock(event.dump());
     }
 }
 
@@ -659,6 +667,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
+    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
     std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     s_instance = nullptr;
     if (node) {
@@ -925,7 +934,7 @@ void LogosBlockchainModule::persistLifecycleConfigLocked() {
 }
 
 void LogosBlockchainModule::onContextReady() {
-    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    std::unique_lock<std::recursive_mutex> node_lock(nodeMutex);
     std::lock_guard<std::mutex> lock(lifecycleMutex);
     if (lifecycleState != LifecycleState::Uninitialized || lifecyclePending || node || !lifecycleConfigPath.empty())
         return;
@@ -1178,7 +1187,7 @@ void LogosBlockchainModule::settleLifecycleAction(
 }
 
 StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_path, const std::string& deployment) {
-    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    std::unique_lock<std::recursive_mutex> node_lock(nodeMutex);
     if (node) {
         return result::err("The node is already running.");
     }
@@ -1207,7 +1216,12 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     }
 
     node = value;
-    s_instance = this;
+    node_lock.unlock();
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        s_instance = this;
+    }
+    node_lock.lock();
     OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (is_ok(&subscribe_status)) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
@@ -1217,7 +1231,12 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     }
 
     const std::string message = operation_status::take_message(subscribe_status);
-    s_instance = nullptr;
+    node_lock.unlock();
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        s_instance = nullptr;
+    }
+    node_lock.lock();
     // shutdown_node consumes the node handle even when shutdown reports an
     // error. Clear both aliases before dispatch so a later start or teardown
     // cannot reuse the consumed pointer.
@@ -1233,6 +1252,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 }
 
 StdLogosResult LogosBlockchainModule::stopPrepared() {
+    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
     std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
