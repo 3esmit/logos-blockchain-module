@@ -656,9 +656,23 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
         std::shared_ptr<CallbackLifetime> lifetime;
         const void* previous = nullptr;
         ~CallbackScope() {
-            std::lock_guard<std::mutex> lock(lifetime->mutex);
-            --lifetime->inFlight;
-            lifetime->condition.notify_all();
+            LogosBlockchainNode* deferred_node = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                deferred_node = lifetime->deferredNode;
+                lifetime->deferredNode = nullptr;
+            }
+            if (deferred_node) {
+                OperationStatus status = shutdown_node(deferred_node);
+                if (!is_ok(&status)) {
+                    (void)operation_status::take_message(status);
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                --lifetime->inFlight;
+                lifetime->condition.notify_all();
+            }
             active_callback_lifetime = previous;
         }
     } callback_scope{lifetime, active_callback_lifetime};
@@ -724,7 +738,8 @@ LogosBlockchainModule::~LogosBlockchainModule() {
     // singleton mutex could deadlock shutdown.
     if (node_to_shutdown) {
         if (callback_reentrant) {
-            shutdownNodeAsync(node_to_shutdown);
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->deferredNode = node_to_shutdown;
             return;
         }
         OperationStatus status = shutdown_node(node_to_shutdown);
@@ -740,18 +755,6 @@ void LogosBlockchainModule::waitForCallbacks(const std::shared_ptr<CallbackLifet
     }
     std::unique_lock<std::mutex> lock(lifetime->mutex);
     lifetime->condition.wait(lock, [&lifetime] { return lifetime->inFlight == 0; });
-}
-
-void LogosBlockchainModule::shutdownNodeAsync(LogosBlockchainNode* node_to_shutdown) {
-    if (!node_to_shutdown) {
-        return;
-    }
-    std::thread([node_to_shutdown] {
-        OperationStatus status = shutdown_node(node_to_shutdown);
-        if (!is_ok(&status)) {
-            (void)operation_status::take_message(status);
-        }
-    }).detach();
 }
 
 const char* LogosBlockchainModule::lifecycleStateName(const LifecycleState state) {
@@ -1266,6 +1269,12 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     if (node) {
         return result::err("The node is already running.");
     }
+    {
+        std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
+        if (callbackLifetime->deferredNode) {
+            return result::err("A callback shutdown is still in progress.");
+        }
+    }
 
     std::string effective_config_path = config_path;
     if (effective_config_path.empty()) {
@@ -1373,7 +1382,8 @@ StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
         *shutdown_attempted = true;
     }
     if (callback_reentrant) {
-        shutdownNodeAsync(node_to_shutdown);
+        std::lock_guard<std::mutex> lock(lifetime->mutex);
+        lifetime->deferredNode = node_to_shutdown;
         return result::ok();
     }
     OperationStatus status = shutdown_node(node_to_shutdown);

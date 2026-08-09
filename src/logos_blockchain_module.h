@@ -266,6 +266,7 @@ private:
         mutable std::mutex mutex;
         mutable std::condition_variable condition;
         std::size_t inFlight = 0;
+        LogosBlockchainNode* deferredNode = nullptr;
     };
     std::shared_ptr<CallbackLifetime> callbackLifetime = std::make_shared<CallbackLifetime>();
 
@@ -313,7 +314,6 @@ private:
     [[nodiscard]] std::string restoredLifecycleConfigPath() const;
     void persistLifecycleConfigLocked();
     void waitForCallbacks(const std::shared_ptr<CallbackLifetime>& lifetime);
-    static void shutdownNodeAsync(LogosBlockchainNode* node_to_shutdown);
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
     [[nodiscard]] StdLogosResult stopPrepared(bool* shutdown_attempted = nullptr);
