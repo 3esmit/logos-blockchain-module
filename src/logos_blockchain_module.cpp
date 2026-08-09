@@ -2215,19 +2215,15 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     );
     const bool has_explicit_provider_key = has_configured_blend_key(config_path, "BlendSigning");
     const bool has_explicit_zk_key = has_configured_blend_key(config_path, "BlendZk");
-    const bool has_runtime_provider_key = has_configured_blend_key(config_path, "non_ephemeral_signing_key_id");
-    const bool has_runtime_zk_key = has_configured_blend_key(config_path, "secret_key_kms_id");
     if ((has_explicit_provider_key && configured_provider_id.empty()) ||
         (has_explicit_zk_key && configured_zk_id.empty()) ||
-        (!has_explicit_provider_key && !has_runtime_provider_key) ||
-        (!has_explicit_zk_key && !has_runtime_zk_key)) {
+        !has_explicit_provider_key || !has_explicit_zk_key) {
         return result::err("Unable to verify Blend identities from the running node configuration.");
     }
-    // The current C binding resolves KMS key IDs to public identities inside
-    // the running node. Legacy configs expose those KMS IDs instead of the
-    // resolved public keys, so the binding remains the source of truth for
-    // that representation. Explicit public-key configs can still be checked
-    // before dispatching the join request.
+    // The current C binding derives KMS-backed identities inside the running
+    // node but does not expose the resolved public keys. Reject that form until
+    // the binding can return those identities, rather than accepting a caller
+    // supplied ID that cannot be verified against the declaration.
     if (!configured_provider_id.empty() && provider_id_bytes != configured_provider_id) {
         return result::err("provider_id_hex does not match the running node's BlendSigning identity.");
     }

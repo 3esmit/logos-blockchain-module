@@ -1665,7 +1665,7 @@ LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
     delete module;
 }
 
-LOGOS_TEST(blend_join_accepts_runtime_kms_identity_configuration) {
+LOGOS_TEST(blend_join_rejects_unverifiable_runtime_kms_identity_configuration) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
     auto* module = createStartedModule(t, tmpDir);
@@ -1678,13 +1678,12 @@ LOGOS_TEST(blend_join_accepts_runtime_kms_identity_configuration) {
               "core: {zk: {secret_key_kms_id: zk-kms-id}}}\n";
     config.close();
 
-    t.mockCFunction("blend_join_as_core_node_error").returns(0);
-
     const StdLogosResult result = module->blend_join_as_core_node(
         VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
     );
-    LOGOS_ASSERT_TRUE(result.success);
-    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "Unable to verify Blend identities"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
     delete module;
 }
 
