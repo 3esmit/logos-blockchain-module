@@ -32,6 +32,7 @@ std::vector<std::string> node_changed_events();
 using NewBlockHook = void (*)();
 void set_new_block_hook(NewBlockHook hook);
 void trigger_mock_new_block(const char* block_json);
+bool mock_shutdown_during_block_callback();
 void reset_mock_start_control();
 void set_mock_start_blocked(bool blocked);
 bool mock_start_entered();
@@ -371,10 +372,13 @@ LOGOS_TEST(block_callback_stop_defers_shutdown_until_callback_returns) {
     set_new_block_hook(nullptr);
     g_callbackStopModule = nullptr;
 
-    for (int attempt = 0; attempt < 500 && !t.cFunctionCalled("shutdown_node"); ++attempt) {
+    for (int attempt = 0; attempt < 500; ++attempt) {
+        if (t.cFunctionCalled("shutdown_node") && read_node_status(module).at("pending_operation").is_null())
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_FALSE(mock_shutdown_during_block_callback());
     LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
 }
 

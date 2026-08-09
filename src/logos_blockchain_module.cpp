@@ -657,16 +657,19 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
         const void* previous = nullptr;
         ~CallbackScope() {
             LogosBlockchainNode* deferred_node = nullptr;
+            std::optional<DeferredLifecycle> deferred_lifecycle;
             {
                 std::lock_guard<std::mutex> lock(lifetime->mutex);
                 deferred_node = lifetime->deferredNode;
                 lifetime->deferredNode = nullptr;
+                deferred_lifecycle = std::move(lifetime->deferredLifecycle);
+                lifetime->deferredLifecycle.reset();
+                if (deferred_node) {
+                    lifetime->shutdownInProgress = true;
+                }
             }
             if (deferred_node) {
-                OperationStatus status = shutdown_node(deferred_node);
-                if (!is_ok(&status)) {
-                    (void)operation_status::take_message(status);
-                }
+                LogosBlockchainModule::dispatchDeferredShutdown(lifetime, deferred_node, std::move(deferred_lifecycle));
             }
             {
                 std::lock_guard<std::mutex> lock(lifetime->mutex);
@@ -699,9 +702,15 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
 }
 
 LogosBlockchainModule::LogosBlockchainModule()
-    : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {}
+    : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {
+    callbackLifetime->owner = this;
+}
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    {
+        std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
+        callbackLifetime->owner = nullptr;
+    }
     std::thread worker;
     {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
@@ -732,6 +741,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
     const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
     if (!callback_reentrant) {
         waitForCallbacks(lifetime);
+        waitForDeferredShutdown(lifetime);
     }
     // shutdown_node consumes the handle and may wait for callback work. Do not
     // hold either lifetime lock while it runs, or a callback waiting on the
@@ -755,6 +765,60 @@ void LogosBlockchainModule::waitForCallbacks(const std::shared_ptr<CallbackLifet
     }
     std::unique_lock<std::mutex> lock(lifetime->mutex);
     lifetime->condition.wait(lock, [&lifetime] { return lifetime->inFlight == 0; });
+}
+
+void LogosBlockchainModule::waitForDeferredShutdown(const std::shared_ptr<CallbackLifetime>& lifetime) {
+    if (!lifetime || lifetime.get() == active_callback_lifetime) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(lifetime->mutex);
+    lifetime->condition.wait(lock, [&lifetime] {
+        return !lifetime->shutdownInProgress && !lifetime->deferredNode;
+    });
+}
+
+void LogosBlockchainModule::dispatchDeferredShutdown(
+    const std::shared_ptr<CallbackLifetime>& lifetime,
+    LogosBlockchainNode* node_to_shutdown,
+    std::optional<DeferredLifecycle> lifecycle
+) {
+    if (!lifetime || !node_to_shutdown) {
+        return;
+    }
+
+    std::thread([lifetime, node_to_shutdown, lifecycle = std::move(lifecycle)]() mutable {
+        {
+            std::unique_lock<std::mutex> lock(lifetime->mutex);
+            lifetime->condition.wait(lock, [&lifetime] { return lifetime->inFlight == 0; });
+        }
+
+        OperationStatus status = shutdown_node(node_to_shutdown);
+        if (!is_ok(&status)) {
+            (void)operation_status::take_message(status);
+        }
+
+        LogosBlockchainModule* owner = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            owner = lifetime->owner;
+        }
+        if (lifecycle && owner) {
+            const void* previous = active_callback_lifetime;
+            active_callback_lifetime = lifetime.get();
+            owner->settleLifecycleAction(
+                lifecycle->dispatch,
+                true,
+                LifecycleState::Stopped,
+                LifecycleState::Stopped
+            );
+            active_callback_lifetime = previous;
+        }
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->shutdownInProgress = false;
+            lifetime->condition.notify_all();
+        }
+    }).detach();
 }
 
 const char* LogosBlockchainModule::lifecycleStateName(const LifecycleState state) {
@@ -1271,7 +1335,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     }
     {
         std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
-        if (callbackLifetime->deferredNode) {
+        if (callbackLifetime->deferredNode || callbackLifetime->shutdownInProgress) {
             return result::err("A callback shutdown is still in progress.");
         }
     }
@@ -1350,9 +1414,16 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     );
 }
 
-StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
+StdLogosResult LogosBlockchainModule::stopPrepared(
+    bool* shutdown_attempted,
+    const LifecycleDispatch* deferred_dispatch,
+    bool* shutdown_deferred
+) {
     if (shutdown_attempted) {
         *shutdown_attempted = false;
+    }
+    if (shutdown_deferred) {
+        *shutdown_deferred = false;
     }
     LogosBlockchainNode* node_to_shutdown = nullptr;
     {
@@ -1384,6 +1455,12 @@ StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
     if (callback_reentrant) {
         std::lock_guard<std::mutex> lock(lifetime->mutex);
         lifetime->deferredNode = node_to_shutdown;
+        if (deferred_dispatch) {
+            lifetime->deferredLifecycle = DeferredLifecycle{*deferred_dispatch};
+        }
+        if (shutdown_deferred) {
+            *shutdown_deferred = true;
+        }
         return result::ok();
     }
     OperationStatus status = shutdown_node(node_to_shutdown);
@@ -1413,7 +1490,11 @@ StdLogosResult LogosBlockchainModule::stop() {
     }
     emitLifecycleEvents(dispatch.events);
     bool shutdown_attempted = false;
-    const StdLogosResult stopped = stopPrepared(&shutdown_attempted);
+    bool shutdown_deferred = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+    if (shutdown_deferred) {
+        return stopped;
+    }
     // The consumed handle cannot be retried after a shutdown error. Report a
     // terminal stopped state only after shutdown consumed a handle. If no
     // handle existed, preserve the state that preceded this legacy request.
@@ -1470,7 +1551,11 @@ void LogosBlockchainModule::dispatchLifecycleAction(
     }
 
     bool shutdown_attempted = false;
-    const StdLogosResult stopped = stopPrepared(&shutdown_attempted);
+    bool shutdown_deferred = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+    if (shutdown_deferred) {
+        return;
+    }
     // The consumed handle cannot be retried after a shutdown error. Report a
     // terminal stopped state only after shutdown consumed a handle. A stale
     // lifecycle snapshot with no live handle remains in its previous state.
