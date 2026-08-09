@@ -681,15 +681,22 @@ LogosBlockchainModule::~LogosBlockchainModule() {
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
-    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
-    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
-    s_instance = nullptr;
-    if (node) {
-        OperationStatus status = shutdown_node(node);
+    LogosBlockchainNode* node_to_shutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+        s_instance = nullptr;
+        node_to_shutdown = node;
+        node = nullptr;
+    }
+    // shutdown_node consumes the handle and may wait for callback work. Do not
+    // hold either lifetime lock while it runs, or a callback waiting on the
+    // singleton mutex could deadlock shutdown.
+    if (node_to_shutdown) {
+        OperationStatus status = shutdown_node(node_to_shutdown);
         if (!is_ok(&status)) {
             (void)operation_status::take_message(status);
         }
-        node = nullptr;
     }
 }
 
@@ -1246,16 +1253,17 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 
     const std::string message = operation_status::take_message(subscribe_status);
     node_lock.unlock();
+    LogosBlockchainNode* node_to_shutdown = nullptr;
     {
         std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_guard(nodeMutex);
         s_instance = nullptr;
+        // shutdown_node consumes the node handle even when shutdown reports
+        // an error. Clear both aliases before dispatch so a later start or
+        // teardown cannot reuse the consumed pointer.
+        node_to_shutdown = node;
+        node = nullptr;
     }
-    node_lock.lock();
-    // shutdown_node consumes the node handle even when shutdown reports an
-    // error. Clear both aliases before dispatch so a later start or teardown
-    // cannot reuse the consumed pointer.
-    LogosBlockchainNode* node_to_shutdown = node;
-    node = nullptr;
     OperationStatus stop_status = shutdown_node(node_to_shutdown);
     if (!is_ok(&stop_status)) {
         (void)operation_status::take_message(stop_status);
@@ -1266,18 +1274,23 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 }
 
 StdLogosResult LogosBlockchainModule::stopPrepared() {
-    std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
-    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
-    if (!node) {
-        return result::err("The node is not running.");
+    LogosBlockchainNode* node_to_shutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+        if (!node) {
+            return result::err("The node is not running.");
+        }
+
+        // shutdown_node consumes the node handle even when shutdown reports
+        // an error. Clear both aliases before dispatch so no later operation
+        // can use the consumed pointer or publish block events into this
+        // module instance.
+        node_to_shutdown = node;
+        node = nullptr;
+        s_instance = nullptr;
     }
 
-    // shutdown_node consumes the node handle even when shutdown reports an
-    // error. Clear both aliases before dispatch so no later operation can use
-    // the consumed pointer or publish block events into this module instance.
-    LogosBlockchainNode* node_to_shutdown = node;
-    node = nullptr;
-    s_instance = nullptr;
     OperationStatus status = shutdown_node(node_to_shutdown);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
