@@ -327,7 +327,7 @@ LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
     reset_node_changed_events();
     const json stopped = invoke_node_action(module, lifecycle_command("bedrock-stop-v1", "stop"));
     LOGOS_ASSERT_TRUE(stopped.at("accepted").get<bool>());
-    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("shutdown_node"));
     events = lifecycle_events();
     LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
     LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
@@ -391,7 +391,7 @@ LOGOS_TEST(node_action_restarts_a_legacy_started_node) {
     LogosBlockchainModule module;
     t.mockCFunction("start_lb_node").returns(1);
     t.mockCFunction("subscribe_to_new_blocks").returns(0);
-    t.mockCFunction("stop_node").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
 
     LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
     LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
@@ -485,7 +485,7 @@ LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_no
     t.mockCFunction("start_lb_node").returns(1);
     t.mockCFunction("subscribe_to_new_blocks").returns(0);
     LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
-    t.mockCFunction("stop_node").returns(1);
+    t.mockCFunction("shutdown_node").returns(1);
     LOGOS_ASSERT_FALSE(module.stop().success);
     LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
 }
@@ -866,7 +866,7 @@ LOGOS_TEST(stop_succeeds_with_running_node) {
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     LOGOS_ASSERT_TRUE(module->stop().success);
-    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("shutdown_node"));
     delete module;
 }
 

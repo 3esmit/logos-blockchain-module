@@ -449,7 +449,7 @@ namespace {
         std::string state_path_data;
         std::string storage_path_data;
         std::string logs_path_data;
-        bool ibd_val = true;
+        bool skip_ibd_val = false;
         std::string log_filter_data;
         std::string kms_file_data;
 
@@ -540,16 +540,15 @@ namespace {
                 ffi_args.logs_path = nullptr;
             }
 
-            // The release C API accepts `ibd`, while Inspector's established
-            // JSON contract uses the inverse `skip_ibd`. Preserve both input
-            // forms and explicitly default to IBD so a generated Testnet
-            // configuration synchronizes rather than remaining at genesis.
+            // The C API accepts `skip_ibd`, while Inspector also accepts the
+            // legacy inverse `ibd` JSON field. Preserve both forms and default
+            // to IBD so a generated Testnet configuration synchronizes.
             if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
-                ibd_val = !args["skip_ibd"].get<bool>();
+                skip_ibd_val = args["skip_ibd"].get<bool>();
             } else if (args.contains("ibd") && args["ibd"].is_boolean()) {
-                ibd_val = args["ibd"].get<bool>();
+                skip_ibd_val = !args["ibd"].get<bool>();
             }
-            ffi_args.ibd = &ibd_val;
+            ffi_args.skip_ibd = &skip_ibd_val;
 
             // log_filter (string -> const char*)
             if (args.contains("log_filter") && args["log_filter"].is_string()) {
@@ -617,7 +616,7 @@ LogosBlockchainModule::~LogosBlockchainModule() {
     // the existing best-effort cleanup without emitting into a dying context.
     s_instance = nullptr;
     if (node) {
-        OperationStatus status = stop_node(node);
+        OperationStatus status = shutdown_node(node);
         if (!is_ok(&status)) {
             (void)operation_status::take_message(status);
         }
@@ -1171,7 +1170,7 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
 
     const std::string message = operation_status::take_message(subscribe_status);
     s_instance = nullptr;
-    OperationStatus stop_status = stop_node(node);
+    OperationStatus stop_status = shutdown_node(node);
     if (!is_ok(&stop_status)) {
         (void)operation_status::take_message(stop_status);
     }
@@ -1186,7 +1185,7 @@ StdLogosResult LogosBlockchainModule::stopPrepared() {
         return result::err("The node is not running.");
     }
 
-    OperationStatus status = stop_node(node);
+    OperationStatus status = shutdown_node(node);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
     }
@@ -2059,27 +2058,34 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    std::vector<const char*> locators_ptrs;
-    locators_ptrs.reserve(locators.size());
+    if (locators.empty()) {
+        return result::err("At least one Blend locator is required.");
+    }
+
+    // Newer blockchain C bindings derive provider and ZK identities from the
+    // running node configuration and accept one locator per call. Keep the
+    // established module contract by validating both IDs, then retrying each
+    // supplied locator until one succeeds.
+    std::string last_error = "Blend join failed for all supplied locators.";
     for (const std::string& locator : locators) {
-        locators_ptrs.push_back(locator.c_str());
+        auto [value, error] = ::blend_join_as_core_node(
+            node,
+            locator.c_str(),
+            locked_note_id_bytes.data()
+        );
+        if (!is_ok(&error)) {
+            last_error = operation_status::take_message(error);
+            continue;
+        }
+
+        std::string declaration_id = bytes_to_hex(
+            reinterpret_cast<const uint8_t*>(&value), sizeof(value)
+        );
+        fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
+        return result::ok(std::move(declaration_id));
     }
 
-    auto [value, error] = ::blend_join_as_core_node(
-        node,
-        provider_id_bytes.data(),
-        zk_id_bytes.data(),
-        locked_note_id_bytes.data(),
-        locators_ptrs.data(),
-        locators_ptrs.size()
-    );
-    if (!is_ok(&error)) {
-        return result::err(operation_status::take_message(error));
-    }
-
-    std::string declaration_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
-    fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
-    return result::ok(std::move(declaration_id));
+    return result::err(std::move(last_error));
 }
 
 // Explorer
