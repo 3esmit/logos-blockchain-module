@@ -252,10 +252,6 @@ namespace {
         return {};
     }
 
-    bool has_configured_blend_key(const std::string& config_path, const char* key) {
-        return !configured_blend_public_key(config_path, key).empty();
-    }
-
     // Parse arbitrary-length hex (optional 0x prefix) into bytes. Unlike
     // parse_address_hex this does not enforce a fixed length; used for the
     // variable-length channel deposit metadata. Returns false on odd length or
@@ -705,6 +701,8 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         s_instance = nullptr;
         node_to_shutdown = node;
         node = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
     }
     waitForCallbacks();
     // shutdown_node consumes the handle and may wait for callback work. Do not
@@ -1253,6 +1251,16 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     const std::string deployment_path = localPathFromFileUrl(deployment);
     const char* config_path_ptr = effective_config_path.empty() ? nullptr : effective_config_path.c_str();
     const char* deployment_ptr = deployment_path.empty() ? nullptr : deployment_path.c_str();
+    // Capture explicit identities before starting the node. The snapshot
+    // remains authoritative if the configuration file changes later. KMS-only
+    // configurations remain empty and are rejected by the join path because
+    // this C ABI does not expose the resolved public identities.
+    const std::vector<uint8_t> startup_blend_provider_identity = parse_address_hex(
+        configured_blend_public_key(effective_config_path, "BlendSigning")
+    );
+    const std::vector<uint8_t> startup_blend_zk_identity = parse_address_hex(
+        configured_blend_public_key(effective_config_path, "BlendZk")
+    );
 
     auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
     if (!is_ok(&error)) {
@@ -1273,6 +1281,8 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     if (is_ok(&subscribe_status)) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
         lifecycleConfigPath = effective_config_path;
+        blendProviderIdentity = startup_blend_provider_identity;
+        blendZkIdentity = startup_blend_zk_identity;
         persistLifecycleConfigLocked();
         return result::ok();
     }
@@ -1289,6 +1299,8 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
         // teardown cannot reuse the consumed pointer.
         node_to_shutdown = node;
         node = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
     }
     OperationStatus stop_status = shutdown_node(node_to_shutdown);
     if (!is_ok(&stop_status)) {
@@ -1318,6 +1330,8 @@ StdLogosResult LogosBlockchainModule::stopPrepared(bool* shutdown_attempted) {
         node_to_shutdown = node;
         node = nullptr;
         s_instance = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
     }
 
     waitForCallbacks();
@@ -2229,22 +2243,9 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("The current Blend binding accepts exactly one locator per join.");
     }
 
-    std::string config_path;
-    {
-        std::lock_guard<std::mutex> lock(lifecycleMutex);
-        config_path = lifecycleConfigPath;
-    }
-    const std::vector<uint8_t> configured_provider_id = parse_address_hex(
-        configured_blend_public_key(config_path, "BlendSigning")
-    );
-    const std::vector<uint8_t> configured_zk_id = parse_address_hex(
-        configured_blend_public_key(config_path, "BlendZk")
-    );
-    const bool has_explicit_provider_key = has_configured_blend_key(config_path, "BlendSigning");
-    const bool has_explicit_zk_key = has_configured_blend_key(config_path, "BlendZk");
-    if ((has_explicit_provider_key && configured_provider_id.empty()) ||
-        (has_explicit_zk_key && configured_zk_id.empty()) ||
-        !has_explicit_provider_key || !has_explicit_zk_key) {
+    const std::vector<uint8_t> configured_provider_id = blendProviderIdentity;
+    const std::vector<uint8_t> configured_zk_id = blendZkIdentity;
+    if (configured_provider_id.empty() || configured_zk_id.empty()) {
         return result::err("Unable to verify Blend identities from the running node configuration.");
     }
     // The current C binding derives KMS-backed identities inside the running

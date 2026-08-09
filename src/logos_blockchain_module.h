@@ -265,6 +265,11 @@ private:
     mutable std::condition_variable callbackCondition;
     std::size_t callbacksInFlight = 0;
 
+    // Capture explicit identities at node startup; do not reread a mutable
+    // configuration file while a node is running.
+    std::vector<uint8_t> blendProviderIdentity;
+    std::vector<uint8_t> blendZkIdentity;
+
     LifecycleDispatch beginLifecycleAction(
         const std::string& action,
         const std::string& operation_id,

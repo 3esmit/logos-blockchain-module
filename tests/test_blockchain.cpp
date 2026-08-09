@@ -120,6 +120,17 @@ static LogosBlockchainModule* createStartedModule(LogosTestContext& t, TempDir& 
     return module;
 }
 
+static LogosBlockchainModule* createStartedModuleWithConfig(
+    LogosTestContext& t,
+    TempDir& tmpDir,
+    const std::string& config_contents
+) {
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << config_contents;
+    config.close();
+    return createStartedModule(t, tmpDir);
+}
+
 // ============================================================================
 // generate_user_config
 // ============================================================================
@@ -1576,16 +1587,12 @@ LOGOS_TEST(wallet_get_claimable_vouchers_returns_error_on_ffi_failure) {
 LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
-
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "public_keys:\n"
-              "  BlendSigning: "
-           << VALID_HEX << "\n"
-              "  BlendZk: "
-           << VALID_HEX << "\n";
-    config.close();
 
     t.mockCFunction("blend_join_as_core_node_error").returns(0);
 
@@ -1602,16 +1609,12 @@ LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
 LOGOS_TEST(blend_join_as_core_node_returns_error_on_ffi_failure) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
-
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "public_keys:\n"
-              "  BlendSigning: "
-           << VALID_HEX << "\n"
-              "  BlendZk: "
-           << VALID_HEX << "\n";
-    config.close();
 
     t.mockCFunction("blend_join_as_core_node_error").returns(1);
 
@@ -1623,16 +1626,12 @@ LOGOS_TEST(blend_join_as_core_node_returns_error_on_ffi_failure) {
 LOGOS_TEST(blend_join_rejects_multiple_locators_without_dropping_input) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
-
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "public_keys:\n"
-              "  BlendSigning: "
-           << VALID_HEX << "\n"
-              "  BlendZk: "
-           << VALID_HEX << "\n";
-    config.close();
 
     const StdLogosResult result =
         module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1", "locator2"});
@@ -1645,16 +1644,12 @@ LOGOS_TEST(blend_join_rejects_multiple_locators_without_dropping_input) {
 LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
-
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "public_keys:\n"
-              "  BlendSigning: "
-           << VALID_HEX << "\n"
-              "  BlendZk: "
-           << VALID_HEX << "\n";
-    config.close();
 
     const StdLogosResult result = module->blend_join_as_core_node(
         std::string(64, 'b'), VALID_HEX, VALID_HEX, {"locator1"}
@@ -1665,19 +1660,45 @@ LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
     delete module;
 }
 
+LOGOS_TEST(blend_join_uses_identities_captured_at_startup) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    // Editing the path after startup must not change the identities attached
+    // to the live node.
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n  BlendSigning: " << std::string(64, 'b') << "\n  BlendZk: "
+           << std::string(64, 'c') << "\n";
+    config.close();
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
 LOGOS_TEST(blend_join_rejects_unverifiable_runtime_kms_identity_configuration) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "blend: {non_ephemeral_signing_key_id: signing-kms-id, "
+        "core: {zk: {secret_key_kms_id: zk-kms-id}}}\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     // Production node configs expose KMS key IDs. The running C binding
     // resolves those IDs to the public identities used by the join request.
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "blend: {non_ephemeral_signing_key_id: signing-kms-id, "
-              "core: {zk: {secret_key_kms_id: zk-kms-id}}}\n";
-    config.close();
-
     const StdLogosResult result = module->blend_join_as_core_node(
         VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
     );
@@ -1690,13 +1711,12 @@ LOGOS_TEST(blend_join_rejects_unverifiable_runtime_kms_identity_configuration) {
 LOGOS_TEST(blend_join_accepts_quoted_public_key_configuration) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys: {\"BlendSigning\": \"" + VALID_HEX + "\", 'BlendZk': \"" + VALID_HEX + "\"}\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
-
-    std::ofstream config(tmpDir.filePath("config.json"));
-    config << "public_keys: {\"BlendSigning\": \"" << VALID_HEX
-           << "\", 'BlendZk': \"" << VALID_HEX << "\"}\n";
-    config.close();
 
     t.mockCFunction("blend_join_as_core_node_error").returns(0);
 
