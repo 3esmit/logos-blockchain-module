@@ -275,6 +275,7 @@ private:
         LogosBlockchainModule* owner = nullptr;
         std::optional<DeferredLifecycle> deferredLifecycle;
         bool shutdownInProgress = false;
+        bool settlementInProgress = false;
     };
     std::shared_ptr<CallbackLifetime> callbackLifetime = std::make_shared<CallbackLifetime>();
 

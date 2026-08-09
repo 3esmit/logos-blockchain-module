@@ -707,6 +707,8 @@ LogosBlockchainModule::LogosBlockchainModule()
 }
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    const auto lifetime = callbackLifetime;
+    const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
     {
         std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
         callbackLifetime->owner = nullptr;
@@ -722,8 +724,12 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         worker = std::move(lifecycleWorker);
     }
 
-    if (worker.joinable())
-        worker.join();
+    if (worker.joinable()) {
+        if (callback_reentrant)
+            worker.detach();
+        else
+            worker.join();
+    }
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
@@ -737,8 +743,6 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         blendProviderIdentity.clear();
         blendZkIdentity.clear();
     }
-    const auto lifetime = callbackLifetime;
-    const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
     if (!callback_reentrant) {
         waitForCallbacks(lifetime);
         waitForDeferredShutdown(lifetime);
@@ -773,7 +777,7 @@ void LogosBlockchainModule::waitForDeferredShutdown(const std::shared_ptr<Callba
     }
     std::unique_lock<std::mutex> lock(lifetime->mutex);
     lifetime->condition.wait(lock, [&lifetime] {
-        return !lifetime->shutdownInProgress && !lifetime->deferredNode;
+        return !lifetime->shutdownInProgress && !lifetime->settlementInProgress && !lifetime->deferredNode;
     });
 }
 
@@ -802,6 +806,9 @@ void LogosBlockchainModule::dispatchDeferredShutdown(
         {
             std::lock_guard<std::mutex> lock(lifetime->mutex);
             owner = lifetime->owner;
+            lifetime->shutdownInProgress = false;
+            lifetime->settlementInProgress = lifecycle && owner;
+            lifetime->condition.notify_all();
         }
         if (lifecycle && owner) {
             const void* previous = active_callback_lifetime;
@@ -816,7 +823,7 @@ void LogosBlockchainModule::dispatchDeferredShutdown(
         }
         {
             std::lock_guard<std::mutex> lock(lifetime->mutex);
-            lifetime->shutdownInProgress = false;
+            lifetime->settlementInProgress = false;
             lifetime->condition.notify_all();
         }
     }).detach();
@@ -1710,6 +1717,21 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
     );
     emitLifecycleEvents(dispatch.events);
     if (dispatch.disposition != LifecycleDispatchDisposition::Dispatch) {
+        return dispatch.acknowledgement;
+    }
+
+    if (action == "stop" && callbackLifetime.get() == active_callback_lifetime) {
+        bool shutdown_attempted = false;
+        bool shutdown_deferred = false;
+        const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+        if (!shutdown_deferred) {
+            settleLifecycleAction(
+                dispatch,
+                stopped.success,
+                LifecycleState::Stopped,
+                shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+            );
+        }
         return dispatch.acknowledgement;
     }
 
