@@ -1455,7 +1455,7 @@ StdLogosResult LogosBlockchainModule::stopPrepared(
 
     const auto lifetime = callbackLifetime;
     const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
-    if (!callback_reentrant) {
+    if (!callback_reentrant && !defer_nonreentrant) {
         waitForCallbacks(lifetime);
     }
     if (shutdown_attempted) {

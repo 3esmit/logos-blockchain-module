@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -91,11 +92,19 @@ static std::string test_hex_id(const size_t value) {
 }
 
 static LogosBlockchainModule* g_callbackStopModule = nullptr;
+static std::atomic<bool> g_blockNewBlockCallback{false};
+static std::atomic<bool> g_newBlockCallbackEntered{false};
 
 static void stop_from_new_block_callback() {
     if (g_callbackStopModule) {
         (void)g_callbackStopModule->stop();
     }
+}
+
+static void block_new_block_callback() {
+    g_newBlockCallbackEntered.store(true);
+    while (g_blockNewBlockCallback.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
 
 // RAII wrapper for a temporary directory (removed on destruction).
@@ -410,6 +419,40 @@ LOGOS_TEST(block_callback_stop_reports_deferred_shutdown_failure) {
     LOGOS_ASSERT_EQ(status.at("last_error").at("code").get<std::string>(), std::string("stop_failed"));
     const std::vector<json> events = lifecycle_events();
     LOGOS_ASSERT_EQ(events.back().at("outcome").get<std::string>(), std::string("failed"));
+}
+
+LOGOS_TEST(node_action_stop_acknowledges_while_callback_is_in_flight) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_blockNewBlockCallback.store(true);
+    g_newBlockCallbackEntered.store(false);
+    set_new_block_hook(block_new_block_callback);
+    std::thread callback_thread([] { trigger_mock_new_block(R"({"slot":3})"); });
+    const auto callback_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!g_newBlockCallbackEntered.load() && std::chrono::steady_clock::now() < callback_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    LOGOS_ASSERT_TRUE(g_newBlockCallbackEntered.load());
+
+    const auto started_at = std::chrono::steady_clock::now();
+    const json acknowledgement =
+        json::parse(module.nodeAction(lifecycle_command("bedrock-stop-in-flight", "stop").dump()));
+    const auto acknowledgement_time = std::chrono::steady_clock::now() - started_at;
+    LOGOS_ASSERT_TRUE(acknowledgement.at("accepted").get<bool>());
+    LOGOS_ASSERT_TRUE(acknowledgement_time < std::chrono::milliseconds(500));
+
+    g_blockNewBlockCallback.store(false);
+    callback_thread.join();
+    set_new_block_hook(nullptr);
+    const json status = wait_for_lifecycle_terminal(module);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_FALSE(mock_shutdown_during_block_callback());
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
 }
 
 LOGOS_TEST(node_action_start_acknowledges_before_blocking_node_start_finishes) {
