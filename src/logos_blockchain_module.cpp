@@ -212,16 +212,30 @@ namespace {
             if (comment != std::string::npos) {
                 line.erase(comment);
             }
-            const std::string prefix = std::string(key) + ":";
-            const auto key_position = line.find(prefix);
-            if (key_position == std::string::npos ||
-                (key_position > 0 &&
-                 (std::isalnum(static_cast<unsigned char>(line[key_position - 1])) ||
-                  line[key_position - 1] == '_'))) {
+            const std::vector<std::string> prefixes = {
+                std::string(key) + ":",
+                "\"" + std::string(key) + "\":",
+                "'" + std::string(key) + "':",
+            };
+            std::string::size_type key_position = std::string::npos;
+            std::string::size_type prefix_size = 0;
+            for (const auto& prefix : prefixes) {
+                const auto candidate = line.find(prefix);
+                if (candidate == std::string::npos ||
+                    (candidate > 0 &&
+                     (std::isalnum(static_cast<unsigned char>(line[candidate - 1])) ||
+                      line[candidate - 1] == '_'))) {
+                    continue;
+                }
+                key_position = candidate;
+                prefix_size = prefix.size();
+                break;
+            }
+            if (key_position == std::string::npos) {
                 continue;
             }
 
-            std::string value = line.substr(key_position + prefix.size());
+            std::string value = line.substr(key_position + prefix_size);
             const auto delimiter = value.find_first_of(",}");
             if (delimiter != std::string::npos) {
                 value.erase(delimiter);

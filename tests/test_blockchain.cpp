@@ -1678,6 +1678,27 @@ LOGOS_TEST(blend_join_accepts_runtime_kms_identity_configuration) {
     delete module;
 }
 
+LOGOS_TEST(blend_join_accepts_quoted_public_key_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys: {\"BlendSigning\": \"" << VALID_HEX
+           << "\", 'BlendZk': \"" << VALID_HEX << "\"}\n";
+    config.close();
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
 // Explorer
 
 LOGOS_TEST(get_block_returns_json_on_success) {
