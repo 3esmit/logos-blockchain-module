@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +30,10 @@ static bool contains(const std::string& s, const std::string& sub) {
 
 void reset_node_changed_events();
 std::vector<std::string> node_changed_events();
+using NewBlockHook = void (*)();
+void set_new_block_hook(NewBlockHook hook);
+void trigger_mock_new_block(const char* block_json);
+bool mock_shutdown_during_block_callback();
 void reset_mock_start_control();
 void set_mock_start_blocked(bool blocked);
 bool mock_start_entered();
@@ -86,6 +91,22 @@ static std::string test_hex_id(const size_t value) {
     return id;
 }
 
+static LogosBlockchainModule* g_callbackStopModule = nullptr;
+static std::atomic<bool> g_blockNewBlockCallback{false};
+static std::atomic<bool> g_newBlockCallbackEntered{false};
+
+static void stop_from_new_block_callback() {
+    if (g_callbackStopModule) {
+        (void)g_callbackStopModule->stop();
+    }
+}
+
+static void block_new_block_callback() {
+    g_newBlockCallbackEntered.store(true);
+    while (g_blockNewBlockCallback.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
 // RAII wrapper for a temporary directory (removed on destruction).
 struct TempDir {
     fs::path path;
@@ -118,6 +139,17 @@ static LogosBlockchainModule* createStartedModule(LogosTestContext& t, TempDir& 
         return nullptr;
     }
     return module;
+}
+
+static LogosBlockchainModule* createStartedModuleWithConfig(
+    LogosTestContext& t,
+    TempDir& tmpDir,
+    const std::string& config_contents
+) {
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << config_contents;
+    config.close();
+    return createStartedModule(t, tmpDir);
 }
 
 // ============================================================================
@@ -327,11 +359,100 @@ LOGOS_TEST(node_action_starts_and_stops_an_initialized_node) {
     reset_node_changed_events();
     const json stopped = invoke_node_action(module, lifecycle_command("bedrock-stop-v1", "stop"));
     LOGOS_ASSERT_TRUE(stopped.at("accepted").get<bool>());
-    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("shutdown_node"));
     events = lifecycle_events();
     LOGOS_ASSERT_EQ(events.size(), static_cast<size_t>(2));
     LOGOS_ASSERT_EQ(events.at(1).at("outcome").get<std::string>(), std::string("succeeded"));
     LOGOS_ASSERT_EQ(events.at(1).at("status").at("state").get<std::string>(), std::string("stopped"));
+}
+
+LOGOS_TEST(block_callback_stop_defers_shutdown_until_callback_returns) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_callbackStopModule = &module;
+    set_new_block_hook(stop_from_new_block_callback);
+    trigger_mock_new_block(R"({"slot":1})");
+    set_new_block_hook(nullptr);
+    g_callbackStopModule = nullptr;
+
+    for (int attempt = 0; attempt < 500; ++attempt) {
+        if (t.cFunctionCalled("shutdown_node") && read_node_status(module).at("pending_operation").is_null())
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_FALSE(mock_shutdown_during_block_callback());
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
+}
+
+LOGOS_TEST(block_callback_stop_reports_deferred_shutdown_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(1);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_callbackStopModule = &module;
+    set_new_block_hook(stop_from_new_block_callback);
+    trigger_mock_new_block(R"({"slot":2})");
+    set_new_block_hook(nullptr);
+    g_callbackStopModule = nullptr;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    json status;
+    do {
+        status = read_node_status(module);
+        if (status.at("pending_operation").is_null())
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
+    LOGOS_ASSERT_EQ(status.at("last_error").at("code").get<std::string>(), std::string("stop_failed"));
+    const std::vector<json> events = lifecycle_events();
+    LOGOS_ASSERT_EQ(events.back().at("outcome").get<std::string>(), std::string("failed"));
+}
+
+LOGOS_TEST(node_action_stop_acknowledges_while_callback_is_in_flight) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
+
+    LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("config.json"), "").success);
+    g_blockNewBlockCallback.store(true);
+    g_newBlockCallbackEntered.store(false);
+    set_new_block_hook(block_new_block_callback);
+    std::thread callback_thread([] { trigger_mock_new_block(R"({"slot":3})"); });
+    const auto callback_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!g_newBlockCallbackEntered.load() && std::chrono::steady_clock::now() < callback_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    LOGOS_ASSERT_TRUE(g_newBlockCallbackEntered.load());
+
+    const auto started_at = std::chrono::steady_clock::now();
+    const json acknowledgement =
+        json::parse(module.nodeAction(lifecycle_command("bedrock-stop-in-flight", "stop").dump()));
+    const auto acknowledgement_time = std::chrono::steady_clock::now() - started_at;
+    LOGOS_ASSERT_TRUE(acknowledgement.at("accepted").get<bool>());
+    LOGOS_ASSERT_TRUE(acknowledgement_time < std::chrono::milliseconds(500));
+
+    g_blockNewBlockCallback.store(false);
+    callback_thread.join();
+    set_new_block_hook(nullptr);
+    const json status = wait_for_lifecycle_terminal(module);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("shutdown_node"));
+    LOGOS_ASSERT_FALSE(mock_shutdown_during_block_callback());
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), std::string("stopped"));
 }
 
 LOGOS_TEST(node_action_start_acknowledges_before_blocking_node_start_finishes) {
@@ -391,7 +512,7 @@ LOGOS_TEST(node_action_restarts_a_legacy_started_node) {
     LogosBlockchainModule module;
     t.mockCFunction("start_lb_node").returns(1);
     t.mockCFunction("subscribe_to_new_blocks").returns(0);
-    t.mockCFunction("stop_node").returns(0);
+    t.mockCFunction("shutdown_node").returns(0);
 
     LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
     LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
@@ -455,7 +576,7 @@ LOGOS_TEST(node_action_rejects_stale_and_reused_operation_ids_without_dispatch) 
     LOGOS_ASSERT_TRUE(module.stop().success);
 }
 
-LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_node) {
+LOGOS_TEST(node_action_reports_safe_start_and_stop_failures) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmp_dir;
     LogosBlockchainModule module;
@@ -485,9 +606,33 @@ LOGOS_TEST(node_action_reports_a_safe_start_failure_and_legacy_stop_preserves_no
     t.mockCFunction("start_lb_node").returns(1);
     t.mockCFunction("subscribe_to_new_blocks").returns(0);
     LOGOS_ASSERT_TRUE(module.start(tmp_dir.filePath("node.json"), "").success);
-    t.mockCFunction("stop_node").returns(1);
+    t.mockCFunction("shutdown_node").returns(1);
     LOGOS_ASSERT_FALSE(module.stop().success);
-    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("running"));
+    LOGOS_ASSERT_EQ(read_node_status(module).at("state").get<std::string>(), std::string("stopped"));
+
+    const auto second_stop = module.stop();
+    LOGOS_ASSERT_FALSE(second_stop.success);
+    LOGOS_ASSERT_TRUE(second_stop.error.find("not running") != std::string::npos);
+}
+
+LOGOS_TEST(start_subscription_failure_clears_consumed_node_handle) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmp_dir;
+    LogosBlockchainModule module;
+    t.mockCFunction("start_lb_node").returns(1);
+    t.mockCFunction("subscribe_to_new_blocks").returns(1);
+    t.mockCFunction("shutdown_node").returns(1);
+
+    const StdLogosResult failed = module.start(tmp_dir.filePath("node.json"), "");
+    LOGOS_ASSERT_FALSE(failed.success);
+    LOGOS_ASSERT_TRUE(failed.error.find("subscribe") != std::string::npos);
+
+    t.mockCFunction("subscribe_to_new_blocks").returns(0);
+    const StdLogosResult retried = module.start(tmp_dir.filePath("node.json"), "");
+    LOGOS_ASSERT_TRUE(retried.success);
+    LOGOS_ASSERT_EQ(t.cFunctionCallCount("start_lb_node"), 2);
+    t.mockCFunction("shutdown_node").returns(0);
+    LOGOS_ASSERT_TRUE(module.stop().success);
 }
 
 // The mock records the paths handed to the FFI (see mock_logos_blockchain.cpp).
@@ -726,6 +871,16 @@ LOGOS_TEST(stop_without_node_returns_1) {
     LOGOS_ASSERT_FALSE(module.stop().success);
 }
 
+LOGOS_TEST(stop_without_node_preserves_uninitialized_lifecycle_state) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+
+    LOGOS_ASSERT_FALSE(module.stop().success);
+    const auto status = json::parse(module.nodeStatus());
+    LOGOS_ASSERT_EQ(status.at("state").get<std::string>(), "uninitialized");
+    LOGOS_ASSERT_EQ(status.at("supported_actions").at(0).get<std::string>(), "initialize");
+}
+
 LOGOS_TEST(wallet_get_balance_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
@@ -866,7 +1021,7 @@ LOGOS_TEST(stop_succeeds_with_running_node) {
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     LOGOS_ASSERT_TRUE(module->stop().success);
-    LOGOS_ASSERT(t.cFunctionCalled("stop_node"));
+    LOGOS_ASSERT(t.cFunctionCalled("shutdown_node"));
     delete module;
 }
 
@@ -1542,7 +1697,11 @@ LOGOS_TEST(wallet_get_claimable_vouchers_returns_error_on_ffi_failure) {
 LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     t.mockCFunction("blend_join_as_core_node_error").returns(0);
@@ -1560,13 +1719,141 @@ LOGOS_TEST(blend_join_as_core_node_returns_declaration_id) {
 LOGOS_TEST(blend_join_as_core_node_returns_error_on_ffi_failure) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
-    auto* module = createStartedModule(t, tmpDir);
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
     LOGOS_ASSERT_TRUE(module != nullptr);
 
     t.mockCFunction("blend_join_as_core_node_error").returns(1);
 
-    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {});
+    StdLogosResult result = module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"});
     LOGOS_ASSERT_FALSE(result.success);
+    delete module;
+}
+
+LOGOS_TEST(blend_join_rejects_multiple_locators_without_dropping_input) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const StdLogosResult result =
+        module->blend_join_as_core_node(VALID_HEX, VALID_HEX, VALID_HEX, {"locator1", "locator2"});
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "exactly one locator"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_rejects_identities_that_do_not_match_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const StdLogosResult result = module->blend_join_as_core_node(
+        std::string(64, 'b'), VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "BlendSigning identity"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_uses_identities_captured_at_startup) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning: " + VALID_HEX + "\n  BlendZk: " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    // Editing the path after startup must not change the identities attached
+    // to the live node.
+    std::ofstream config(tmpDir.filePath("config.json"));
+    config << "public_keys:\n  BlendSigning: " << std::string(64, 'b') << "\n  BlendZk: "
+           << std::string(64, 'c') << "\n";
+    config.close();
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_rejects_unverifiable_runtime_kms_identity_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "blend: {non_ephemeral_signing_key_id: signing-kms-id, "
+        "core: {zk: {secret_key_kms_id: zk-kms-id}}}\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    // Production node configs expose KMS key IDs. The running C binding
+    // resolves those IDs to the public identities used by the join request.
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
+    );
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "Unable to verify Blend identities"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_accepts_quoted_public_key_configuration) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys: {\"BlendSigning\": \"" + VALID_HEX + "\", 'BlendZk': \"" + VALID_HEX + "\"}\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"/ip4/127.0.0.1/udp/4040/quic-v1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
+    delete module;
+}
+
+LOGOS_TEST(blend_join_accepts_whitespace_before_mapping_colon) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModuleWithConfig(
+        t,
+        tmpDir,
+        "public_keys:\n  BlendSigning : " + VALID_HEX + "\n  BlendZk : " + VALID_HEX + "\n"
+    );
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("blend_join_as_core_node_error").returns(0);
+    const StdLogosResult result = module->blend_join_as_core_node(
+        VALID_HEX, VALID_HEX, VALID_HEX, {"locator1"}
+    );
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(t.cFunctionCalled("blend_join_as_core_node"));
     delete module;
 }
 

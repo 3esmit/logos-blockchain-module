@@ -20,7 +20,7 @@ test -f "$workflow"
 test "$(jq -r '.name' metadata.json)" = "blockchain_module"
 
 version="$(jq -er '.version | strings | select(length > 0)' metadata.json)"
-test "$version" = "0.2.8"
+test "$version" = "0.2.9"
 grep -Fq "## [${version}]" CHANGELOG.md
 grep -Fq "## Package releases" README.md
 

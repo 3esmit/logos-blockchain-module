@@ -17,6 +17,8 @@
 #include <vector>
 
 std::string g_lastNewBlockJson;
+using NewBlockHook = void (*)();
+static NewBlockHook g_newBlockHook = nullptr;
 
 namespace {
     std::mutex nodeChangedEventsMutex;
@@ -33,6 +35,10 @@ std::vector<std::string> node_changed_events() {
     return nodeChangedEvents;
 }
 
+void set_new_block_hook(NewBlockHook hook) {
+    g_newBlockHook = hook;
+}
+
 void LogosBlockchainModule::nodeChanged(const std::string& event) {
     std::lock_guard<std::mutex> lock(nodeChangedEventsMutex);
     nodeChangedEvents.push_back(event);
@@ -40,5 +46,8 @@ void LogosBlockchainModule::nodeChanged(const std::string& event) {
 
 void LogosBlockchainModule::newBlock(const std::string& blockJson) {
     g_lastNewBlockJson = blockJson;
+    if (g_newBlockHook) {
+        g_newBlockHook();
+    }
     emitEventImpl_("newBlock", nullptr);
 }

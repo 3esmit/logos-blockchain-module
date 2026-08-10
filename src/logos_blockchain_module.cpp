@@ -24,6 +24,7 @@ using json = nlohmann::json;
 
 // Define static member
 LogosBlockchainModule* LogosBlockchainModule::s_instance = nullptr;
+std::mutex LogosBlockchainModule::s_instanceMutex;
 
 namespace operation_status {
     // Takes the Rust-allocated message out of an OperationStatus and frees it.
@@ -76,6 +77,8 @@ namespace {
     constexpr const char* PERSISTED_LIFECYCLE_STATE_SCHEMA = "logos.blockchain.lifecycle_config";
     constexpr size_t MAX_PERSISTED_LIFECYCLE_STATE_BYTES = 4 * 1024;
     std::atomic<std::uint64_t> node_lifecycle_instance_counter{0};
+    thread_local const void* active_callback_lifetime = nullptr;
+    thread_local const void* active_settlement_lifetime = nullptr;
 
     std::int64_t nodeLifecycleTimestampMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -193,6 +196,68 @@ namespace {
         } catch (const boost::algorithm::non_hex_input&) {
             return {};
         }
+    }
+
+    std::string configured_blend_public_key(const std::string& config_path, const char* key) {
+        if (config_path.empty() || !key || !*key) {
+            return {};
+        }
+
+        std::ifstream input(config_path, std::ios::binary);
+        if (!input) {
+            return {};
+        }
+
+        std::string line;
+        while (std::getline(input, line)) {
+            const auto comment = line.find('#');
+            if (comment != std::string::npos) {
+                line.erase(comment);
+            }
+            const std::vector<std::string> key_tokens = {
+                std::string(key),
+                "\"" + std::string(key) + "\"",
+                "'" + std::string(key) + "'",
+            };
+            std::string::size_type key_position = std::string::npos;
+            std::string::size_type prefix_size = 0;
+            for (const auto& token : key_tokens) {
+                const auto candidate = line.find(token);
+                if (candidate == std::string::npos ||
+                    (candidate > 0 &&
+                     (std::isalnum(static_cast<unsigned char>(line[candidate - 1])) ||
+                      line[candidate - 1] == '_'))) {
+                    continue;
+                }
+                auto colon = candidate + token.size();
+                while (colon < line.size() && std::isspace(static_cast<unsigned char>(line[colon]))) {
+                    ++colon;
+                }
+                if (colon >= line.size() || line[colon] != ':') {
+                    continue;
+                }
+                key_position = candidate;
+                prefix_size = colon - candidate + 1;
+                break;
+            }
+            if (key_position == std::string::npos) {
+                continue;
+            }
+
+            std::string value = line.substr(key_position + prefix_size);
+            const auto delimiter = value.find_first_of(",}");
+            if (delimiter != std::string::npos) {
+                value.erase(delimiter);
+            }
+            boost::algorithm::trim(value);
+            if (value.size() >= 2 &&
+                ((value.front() == '\'' && value.back() == '\'') ||
+                 (value.front() == '"' && value.back() == '"'))) {
+                value = value.substr(1, value.size() - 2);
+            }
+            return value;
+        }
+        return {};
     }
 
     // Parse arbitrary-length hex (optional 0x prefix) into bytes. Unlike
@@ -449,7 +514,7 @@ namespace {
         std::string state_path_data;
         std::string storage_path_data;
         std::string logs_path_data;
-        bool ibd_val = true;
+        bool skip_ibd_val = false;
         std::string log_filter_data;
         std::string kms_file_data;
 
@@ -540,16 +605,15 @@ namespace {
                 ffi_args.logs_path = nullptr;
             }
 
-            // The release C API accepts `ibd`, while Inspector's established
-            // JSON contract uses the inverse `skip_ibd`. Preserve both input
-            // forms and explicitly default to IBD so a generated Testnet
-            // configuration synchronizes rather than remaining at genesis.
+            // The C API accepts `skip_ibd`, while Inspector also accepts the
+            // legacy inverse `ibd` JSON field. Preserve both forms and default
+            // to IBD so a generated Testnet configuration synchronizes.
             if (args.contains("skip_ibd") && args["skip_ibd"].is_boolean()) {
-                ibd_val = !args["skip_ibd"].get<bool>();
+                skip_ibd_val = args["skip_ibd"].get<bool>();
             } else if (args.contains("ibd") && args["ibd"].is_boolean()) {
-                ibd_val = args["ibd"].get<bool>();
+                skip_ibd_val = !args["ibd"].get<bool>();
             }
-            ffi_args.ibd = &ibd_val;
+            ffi_args.skip_ibd = &skip_ibd_val;
 
             // log_filter (string -> const char*)
             if (args.contains("log_filter") && args["log_filter"].is_string()) {
@@ -571,9 +635,52 @@ namespace {
 } // namespace
 
 void LogosBlockchainModule::on_new_block_callback(const char* block) {
-    if (!s_instance || !block) {
-        return;
+    LogosBlockchainModule* instance = nullptr;
+    std::shared_ptr<CallbackLifetime> lifetime;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        instance = s_instance;
+        if (!instance || !block) {
+            return;
+        }
+
+        std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
+        if (!instance->node) {
+            return;
+        }
+        lifetime = instance->callbackLifetime;
+        std::lock_guard<std::mutex> callback_lock(lifetime->mutex);
+        ++lifetime->inFlight;
     }
+
+    struct CallbackScope {
+        std::shared_ptr<CallbackLifetime> lifetime;
+        const void* previous = nullptr;
+        ~CallbackScope() {
+            LogosBlockchainNode* deferred_node = nullptr;
+            std::optional<DeferredLifecycle> deferred_lifecycle;
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                deferred_node = lifetime->deferredNode;
+                lifetime->deferredNode = nullptr;
+                deferred_lifecycle = std::move(lifetime->deferredLifecycle);
+                lifetime->deferredLifecycle.reset();
+                if (deferred_node) {
+                    lifetime->shutdownInProgress = true;
+                }
+            }
+            if (deferred_node) {
+                LogosBlockchainModule::dispatchDeferredShutdown(lifetime, deferred_node, std::move(deferred_lifecycle));
+            }
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                --lifetime->inFlight;
+                lifetime->condition.notify_all();
+            }
+            active_callback_lifetime = previous;
+        }
+    } callback_scope{lifetime, active_callback_lifetime};
+    active_callback_lifetime = lifetime.get();
 
     // The C API borrows this pointer for the duration of the callback. Copy the
     // JSON synchronously and avoid calling back into the node from this stream
@@ -584,21 +691,29 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
 
         json event;
         event["block"] = std::move(parsed_block);
-        s_instance->newBlock(event.dump());
+        instance->newBlock(event.dump());
     } catch (const json::parse_error& error) {
         // Keep the legacy fallback for an invalid payload, but never emit the
         // full payload to stderr: a busy block stream must not stall on logs.
         fprintf(stderr, "Failed to parse new block event JSON: %s\n", error.what());
         json event;
         event["block"] = std::string(block);
-        s_instance->newBlock(event.dump());
+        instance->newBlock(event.dump());
     }
 }
 
 LogosBlockchainModule::LogosBlockchainModule()
-    : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {}
+    : lifecycleInstanceId(makeNodeLifecycleInstanceId()), lifecycleUpdatedAtMs(nodeLifecycleTimestampMs()) {
+    callbackLifetime->owner = this;
+}
 
 LogosBlockchainModule::~LogosBlockchainModule() {
+    const auto lifetime = callbackLifetime;
+    const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
+    {
+        std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
+        callbackLifetime->owner = nullptr;
+    }
     std::thread worker;
     {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
@@ -610,19 +725,109 @@ LogosBlockchainModule::~LogosBlockchainModule() {
         worker = std::move(lifecycleWorker);
     }
 
-    if (worker.joinable())
-        worker.join();
+    if (worker.joinable()) {
+        if (callback_reentrant)
+            worker.detach();
+        else
+            worker.join();
+    }
 
     // A module teardown has no consumer to observe a lifecycle event. Preserve
     // the existing best-effort cleanup without emitting into a dying context.
-    s_instance = nullptr;
-    if (node) {
-        OperationStatus status = stop_node(node);
+    LogosBlockchainNode* node_to_shutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+        s_instance = nullptr;
+        node_to_shutdown = node;
+        node = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
+    }
+    if (!callback_reentrant) {
+        waitForCallbacks(lifetime);
+        waitForDeferredShutdown(lifetime);
+    }
+    // shutdown_node consumes the handle and may wait for callback work. Do not
+    // hold either lifetime lock while it runs, or a callback waiting on the
+    // singleton mutex could deadlock shutdown.
+    if (node_to_shutdown) {
+        if (callback_reentrant) {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->deferredNode = node_to_shutdown;
+            return;
+        }
+        OperationStatus status = shutdown_node(node_to_shutdown);
         if (!is_ok(&status)) {
             (void)operation_status::take_message(status);
         }
-        node = nullptr;
     }
+}
+
+void LogosBlockchainModule::waitForCallbacks(const std::shared_ptr<CallbackLifetime>& lifetime) {
+    if (!lifetime || lifetime.get() == active_callback_lifetime) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(lifetime->mutex);
+    lifetime->condition.wait(lock, [&lifetime] { return lifetime->inFlight == 0; });
+}
+
+void LogosBlockchainModule::waitForDeferredShutdown(const std::shared_ptr<CallbackLifetime>& lifetime) {
+    if (!lifetime || lifetime.get() == active_callback_lifetime || lifetime.get() == active_settlement_lifetime) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(lifetime->mutex);
+    lifetime->condition.wait(lock, [&lifetime] {
+        return !lifetime->shutdownInProgress && !lifetime->settlementInProgress && !lifetime->deferredNode;
+    });
+}
+
+void LogosBlockchainModule::dispatchDeferredShutdown(
+    const std::shared_ptr<CallbackLifetime>& lifetime,
+    LogosBlockchainNode* node_to_shutdown,
+    std::optional<DeferredLifecycle> lifecycle
+) {
+    if (!lifetime || !node_to_shutdown) {
+        return;
+    }
+
+    std::thread([lifetime, node_to_shutdown, lifecycle = std::move(lifecycle)]() mutable {
+        {
+            std::unique_lock<std::mutex> lock(lifetime->mutex);
+            lifetime->condition.wait(lock, [&lifetime] { return lifetime->inFlight == 0; });
+        }
+
+        OperationStatus status = shutdown_node(node_to_shutdown);
+        const bool shutdown_success = is_ok(&status);
+        if (!shutdown_success) {
+            (void)operation_status::take_message(status);
+        }
+
+        LogosBlockchainModule* owner = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            owner = lifetime->owner;
+            lifetime->shutdownInProgress = false;
+            lifetime->settlementInProgress = lifecycle && owner;
+            lifetime->condition.notify_all();
+        }
+        if (lifecycle && owner) {
+            const void* previous = active_settlement_lifetime;
+            active_settlement_lifetime = lifetime.get();
+            owner->settleLifecycleAction(
+                lifecycle->dispatch,
+                shutdown_success,
+                LifecycleState::Stopped,
+                LifecycleState::Stopped
+            );
+            active_settlement_lifetime = previous;
+        }
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->settlementInProgress = false;
+            lifetime->condition.notify_all();
+        }
+    }).detach();
 }
 
 const char* LogosBlockchainModule::lifecycleStateName(const LifecycleState state) {
@@ -880,6 +1085,7 @@ void LogosBlockchainModule::persistLifecycleConfigLocked() {
 }
 
 void LogosBlockchainModule::onContextReady() {
+    std::unique_lock<std::recursive_mutex> node_lock(nodeMutex);
     std::lock_guard<std::mutex> lock(lifecycleMutex);
     if (lifecycleState != LifecycleState::Uninitialized || lifecyclePending || node || !lifecycleConfigPath.empty())
         return;
@@ -1132,8 +1338,15 @@ void LogosBlockchainModule::settleLifecycleAction(
 }
 
 StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_path, const std::string& deployment) {
+    std::unique_lock<std::recursive_mutex> node_lock(nodeMutex);
     if (node) {
         return result::err("The node is already running.");
+    }
+    {
+        std::lock_guard<std::mutex> lock(callbackLifetime->mutex);
+        if (callbackLifetime->deferredNode || callbackLifetime->shutdownInProgress) {
+            return result::err("A callback shutdown is still in progress.");
+        }
     }
 
     std::string effective_config_path = config_path;
@@ -1150,6 +1363,16 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     const std::string deployment_path = localPathFromFileUrl(deployment);
     const char* config_path_ptr = effective_config_path.empty() ? nullptr : effective_config_path.c_str();
     const char* deployment_ptr = deployment_path.empty() ? nullptr : deployment_path.c_str();
+    // Capture explicit identities before starting the node. The snapshot
+    // remains authoritative if the configuration file changes later. KMS-only
+    // configurations remain empty and are rejected by the join path because
+    // this C ABI does not expose the resolved public identities.
+    const std::vector<uint8_t> startup_blend_provider_identity = parse_address_hex(
+        configured_blend_public_key(effective_config_path, "BlendSigning")
+    );
+    const std::vector<uint8_t> startup_blend_zk_identity = parse_address_hex(
+        configured_blend_public_key(effective_config_path, "BlendZk")
+    );
 
     auto [value, error] = start_lb_node(config_path_ptr, deployment_ptr);
     if (!is_ok(&error)) {
@@ -1160,38 +1383,113 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     }
 
     node = value;
-    s_instance = this;
+    node_lock.unlock();
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        s_instance = this;
+    }
+    node_lock.lock();
     OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (is_ok(&subscribe_status)) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
         lifecycleConfigPath = effective_config_path;
+        blendProviderIdentity = startup_blend_provider_identity;
+        blendZkIdentity = startup_blend_zk_identity;
         persistLifecycleConfigLocked();
         return result::ok();
     }
 
     const std::string message = operation_status::take_message(subscribe_status);
-    s_instance = nullptr;
-    OperationStatus stop_status = stop_node(node);
+    node_lock.unlock();
+    LogosBlockchainNode* node_to_shutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_guard(nodeMutex);
+        s_instance = nullptr;
+        // shutdown_node consumes the node handle even when shutdown reports
+        // an error. Clear both aliases before dispatch so a later start or
+        // teardown cannot reuse the consumed pointer.
+        node_to_shutdown = node;
+        node = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
+    }
+    OperationStatus stop_status = shutdown_node(node_to_shutdown);
     if (!is_ok(&stop_status)) {
         (void)operation_status::take_message(stop_status);
     }
-    node = nullptr;
     return result::err(
         message.empty() ? "Could not subscribe to block events." : "Could not subscribe to block events: " + message
     );
 }
 
-StdLogosResult LogosBlockchainModule::stopPrepared() {
-    if (!node) {
-        return result::err("The node is not running.");
+StdLogosResult LogosBlockchainModule::stopPrepared(
+    bool* shutdown_attempted,
+    const LifecycleDispatch* deferred_dispatch,
+    bool* shutdown_deferred,
+    const bool defer_nonreentrant
+) {
+    if (shutdown_attempted) {
+        *shutdown_attempted = false;
+    }
+    if (shutdown_deferred) {
+        *shutdown_deferred = false;
+    }
+    LogosBlockchainNode* node_to_shutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+        if (!node) {
+            return result::err("The node is not running.");
+        }
+
+        // shutdown_node consumes the node handle even when shutdown reports
+        // an error. Clear both aliases before dispatch so no later operation
+        // can use the consumed pointer or publish block events into this
+        // module instance.
+        node_to_shutdown = node;
+        node = nullptr;
+        s_instance = nullptr;
+        blendProviderIdentity.clear();
+        blendZkIdentity.clear();
     }
 
-    OperationStatus status = stop_node(node);
+    const auto lifetime = callbackLifetime;
+    const bool callback_reentrant = lifetime && lifetime.get() == active_callback_lifetime;
+    if (!callback_reentrant && !defer_nonreentrant) {
+        waitForCallbacks(lifetime);
+    }
+    if (shutdown_attempted) {
+        *shutdown_attempted = true;
+    }
+    std::optional<DeferredLifecycle> deferred_lifecycle;
+    if (deferred_dispatch) {
+        deferred_lifecycle = DeferredLifecycle{*deferred_dispatch};
+    }
+    if (callback_reentrant) {
+        std::lock_guard<std::mutex> lock(lifetime->mutex);
+        lifetime->deferredNode = node_to_shutdown;
+        lifetime->deferredLifecycle = std::move(deferred_lifecycle);
+        if (shutdown_deferred) {
+            *shutdown_deferred = true;
+        }
+        return result::ok();
+    }
+    if (defer_nonreentrant) {
+        {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            lifetime->shutdownInProgress = true;
+        }
+        dispatchDeferredShutdown(lifetime, node_to_shutdown, std::move(deferred_lifecycle));
+        if (shutdown_deferred) {
+            *shutdown_deferred = true;
+        }
+        return result::ok();
+    }
+    OperationStatus status = shutdown_node(node_to_shutdown);
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
     }
-    s_instance = nullptr;
-    node = nullptr;
     return result::ok();
 }
 
@@ -1214,8 +1512,21 @@ StdLogosResult LogosBlockchainModule::stop() {
         return result::err("A lifecycle operation is already in progress.");
     }
     emitLifecycleEvents(dispatch.events);
-    const StdLogosResult stopped = stopPrepared();
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, dispatch.previousState);
+    bool shutdown_attempted = false;
+    bool shutdown_deferred = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+    if (shutdown_deferred) {
+        return stopped;
+    }
+    // The consumed handle cannot be retried after a shutdown error. Report a
+    // terminal stopped state only after shutdown consumed a handle. If no
+    // handle existed, preserve the state that preceded this legacy request.
+    settleLifecycleAction(
+        dispatch,
+        stopped.success,
+        LifecycleState::Stopped,
+        shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+    );
     return stopped;
 }
 
@@ -1262,8 +1573,21 @@ void LogosBlockchainModule::dispatchLifecycleAction(
         return;
     }
 
-    const StdLogosResult stopped = stopPrepared();
-    settleLifecycleAction(dispatch, stopped.success, LifecycleState::Stopped, LifecycleState::Running);
+    bool shutdown_attempted = false;
+    bool shutdown_deferred = false;
+    const StdLogosResult stopped = stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred);
+    if (shutdown_deferred) {
+        return;
+    }
+    // The consumed handle cannot be retried after a shutdown error. Report a
+    // terminal stopped state only after shutdown consumed a handle. A stale
+    // lifecycle snapshot with no live handle remains in its previous state.
+    settleLifecycleAction(
+        dispatch,
+        stopped.success,
+        LifecycleState::Stopped,
+        shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+    );
 }
 
 std::string LogosBlockchainModule::nodeAction(const std::string& request) {
@@ -1408,6 +1732,22 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
     );
     emitLifecycleEvents(dispatch.events);
     if (dispatch.disposition != LifecycleDispatchDisposition::Dispatch) {
+        return dispatch.acknowledgement;
+    }
+
+    if (action == "stop") {
+        bool shutdown_attempted = false;
+        bool shutdown_deferred = false;
+        const StdLogosResult stopped =
+            stopPrepared(&shutdown_attempted, &dispatch, &shutdown_deferred, true);
+        if (!shutdown_deferred) {
+            settleLifecycleAction(
+                dispatch,
+                stopped.success,
+                LifecycleState::Stopped,
+                shutdown_attempted ? LifecycleState::Stopped : dispatch.previousState
+            );
+        }
         return dispatch.acknowledgement;
     }
 
@@ -1666,6 +2006,7 @@ StdLogosResult LogosBlockchainModule::get_peer_id(const std::string& config_path
 // Wallet
 
 StdLogosResult LogosBlockchainModule::wallet_get_balance(const std::string& address_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     fprintf(stderr, "wallet_get_balance: address_hex=%s\n", address_hex.c_str());
     if (!node) {
         return result::err("The node is not running.");
@@ -1691,6 +2032,7 @@ StdLogosResult LogosBlockchainModule::wallet_transfer_funds(
     const std::string& amount,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1752,6 +2094,7 @@ StdLogosResult LogosBlockchainModule::wallet_transfer_funds(
 }
 
 StdLogosResult LogosBlockchainModule::wallet_get_known_addresses() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         fprintf(stderr, "Could not execute the operation: The node is not running.\n");
         return result::err("The node is not running.");
@@ -1785,6 +2128,7 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
     const std::string& wallet_address_hex,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1830,6 +2174,7 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
 }
 
 StdLogosResult LogosBlockchainModule::leader_claim() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1851,6 +2196,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit(
     const std::string& metadata_hex,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -1915,6 +2261,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
     const std::string& max_tx_fee,
     const std::string& optional_tip_hex
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2003,6 +2350,7 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
 }
 
 StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2040,6 +2388,7 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     const std::string& locked_note_id_hex,
     const std::vector<std::string>& locators
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2059,19 +2408,33 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
         return result::err("Invalid locked_note_id_hex (64 hex characters required).");
     }
 
-    std::vector<const char*> locators_ptrs;
-    locators_ptrs.reserve(locators.size());
-    for (const std::string& locator : locators) {
-        locators_ptrs.push_back(locator.c_str());
+    if (locators.empty()) {
+        return result::err("At least one Blend locator is required.");
+    }
+    if (locators.size() != 1) {
+        return result::err("The current Blend binding accepts exactly one locator per join.");
+    }
+
+    const std::vector<uint8_t> configured_provider_id = blendProviderIdentity;
+    const std::vector<uint8_t> configured_zk_id = blendZkIdentity;
+    if (configured_provider_id.empty() || configured_zk_id.empty()) {
+        return result::err("Unable to verify Blend identities from the running node configuration.");
+    }
+    // The current C binding derives KMS-backed identities inside the running
+    // node but does not expose the resolved public keys. Reject that form until
+    // the binding can return those identities, rather than accepting a caller
+    // supplied ID that cannot be verified against the declaration.
+    if (!configured_provider_id.empty() && provider_id_bytes != configured_provider_id) {
+        return result::err("provider_id_hex does not match the running node's BlendSigning identity.");
+    }
+    if (!configured_zk_id.empty() && zk_id_bytes != configured_zk_id) {
+        return result::err("zk_id_hex does not match the running node's BlendZk identity.");
     }
 
     auto [value, error] = ::blend_join_as_core_node(
         node,
-        provider_id_bytes.data(),
-        zk_id_bytes.data(),
-        locked_note_id_bytes.data(),
-        locators_ptrs.data(),
-        locators_ptrs.size()
+        locators.front().c_str(),
+        locked_note_id_bytes.data()
     );
     if (!is_ok(&error)) {
         return result::err(operation_status::take_message(error));
@@ -2085,6 +2448,7 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
 // Explorer
 
 StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2107,6 +2471,7 @@ StdLogosResult LogosBlockchainModule::get_block(const std::string& header_id_hex
 }
 
 StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const uint64_t to_slot) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2231,6 +2596,7 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
 }
 
 StdLogosResult LogosBlockchainModule::get_time_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2248,6 +2614,7 @@ StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
     const uint64_t to_slot,
     const uint64_t blocks_limit
 ) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2261,6 +2628,7 @@ StdLogosResult LogosBlockchainModule::get_finalized_blocks_range(
 }
 
 StdLogosResult LogosBlockchainModule::get_cryptarchia_headers() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2274,6 +2642,7 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_headers() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_network_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2287,6 +2656,7 @@ StdLogosResult LogosBlockchainModule::get_network_info() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_mantle_metrics() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2300,6 +2670,7 @@ StdLogosResult LogosBlockchainModule::get_mantle_metrics() const {
 }
 
 StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2324,6 +2695,7 @@ StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash
 // Cryptarchia
 
 StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
         return result::err("The node is not running.");
     }

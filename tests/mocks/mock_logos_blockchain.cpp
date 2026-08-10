@@ -27,6 +27,8 @@ uint64_t g_lastFinalizedBlocksRangeLimit = 0;
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
 static BlockCallback s_blockCallback = nullptr;
+static std::atomic<bool> s_blockCallbackActive{false};
+static std::atomic<bool> s_shutdownDuringBlockCallback{false};
 static std::atomic<bool> s_blockStart{false};
 static std::atomic<bool> s_startEntered{false};
 static std::vector<std::string> s_mockGetBlockResponses;
@@ -57,8 +59,14 @@ bool mock_start_entered() {
 
 void trigger_mock_new_block(const char* block_json) {
     if (s_blockCallback) {
+        s_blockCallbackActive.store(true);
         s_blockCallback(block_json);
+        s_blockCallbackActive.store(false);
     }
+}
+
+bool mock_shutdown_during_block_callback() {
+    return s_shutdownDuringBlockCallback.load();
 }
 
 // Known-address mock storage (up to 4 addresses)
@@ -88,7 +96,9 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
     g_lastGeneratedStatePath = args.state_path ? args.state_path : "<null>";
     g_lastGeneratedStoragePath = args.storage_path ? args.storage_path : "<null>";
     g_lastGeneratedLogsPath = args.logs_path ? args.logs_path : "<null>";
-    g_lastGeneratedIbd = args.ibd ? (*args.ibd ? 1 : 0) : -1;
+    // Keep the test probe's historical IBD meaning while consuming the
+    // current C API's `skip_ibd` field.
+    g_lastGeneratedIbd = args.skip_ibd ? (*args.skip_ibd ? 0 : 1) : -1;
     return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config"));
 }
 
@@ -104,10 +114,13 @@ NodeResult start_lb_node(const char* config_path, const char* deployment) {
     return result;
 }
 
-OperationStatus stop_node(LogosBlockchainNode* node) {
-    LOGOS_CMOCK_RECORD("stop_node");
+OperationStatus shutdown_node(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("shutdown_node");
+    if (s_blockCallbackActive.load()) {
+        s_shutdownDuringBlockCallback.store(true);
+    }
     s_blockCallback = nullptr;
-    return make_status(LOGOS_CMOCK_RETURN(int, "stop_node"));
+    return make_status(LOGOS_CMOCK_RETURN(int, "shutdown_node"));
 }
 
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path) {
@@ -319,16 +332,13 @@ FfiChannelDepositResult channel_deposit_with_notes(
 }
 
 BlendHashResult blend_join_as_core_node(
-    LogosBlockchainNode* node,
-    const uint8_t* provider_id,
-    const uint8_t* zk_id,
-    const uint8_t* locked_note_id,
-    const char** locators,
-    size_t locators_count)
+    const LogosBlockchainNode* node,
+    const char* locator,
+    const uint8_t* locked_note_id)
 {
     LOGOS_CMOCK_RECORD("blend_join_as_core_node");
     BlendHashResult result;
-    memset(result.value, 0xCD, sizeof(Hash));
+    memset(&result.value, 0xCD, sizeof(result.value));
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_join_as_core_node_error"));
     return result;
 }

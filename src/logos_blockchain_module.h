@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -236,8 +239,15 @@ private:
         std::vector<std::string> events;
     };
 
+    struct DeferredLifecycle {
+        LifecycleDispatch dispatch;
+    };
+
     LogosBlockchainNode* node = nullptr;
 
+    // Serializes every call that borrows the opaque node handle with lifecycle
+    // start/stop/destruction, so shutdown cannot consume it mid-operation.
+    mutable std::recursive_mutex nodeMutex;
     mutable std::mutex lifecycleMutex;
     LifecycleState lifecycleState = LifecycleState::Uninitialized;
     std::uint64_t lifecycleGeneration = 0;
@@ -257,6 +267,22 @@ private:
     std::unordered_map<std::string, LifecycleOperation> lifecycleOperations;
     std::deque<std::string> completedLifecycleOperationIds;
     std::thread lifecycleWorker;
+    struct CallbackLifetime {
+        mutable std::mutex mutex;
+        mutable std::condition_variable condition;
+        std::size_t inFlight = 0;
+        LogosBlockchainNode* deferredNode = nullptr;
+        LogosBlockchainModule* owner = nullptr;
+        std::optional<DeferredLifecycle> deferredLifecycle;
+        bool shutdownInProgress = false;
+        bool settlementInProgress = false;
+    };
+    std::shared_ptr<CallbackLifetime> callbackLifetime = std::make_shared<CallbackLifetime>();
+
+    // Capture explicit identities at node startup; do not reread a mutable
+    // configuration file while a node is running.
+    std::vector<uint8_t> blendProviderIdentity;
+    std::vector<uint8_t> blendZkIdentity;
 
     LifecycleDispatch beginLifecycleAction(
         const std::string& action,
@@ -296,9 +322,21 @@ private:
     [[nodiscard]] std::string lifecycleInitializationConfigPath(const std::string& config) const;
     [[nodiscard]] std::string restoredLifecycleConfigPath() const;
     void persistLifecycleConfigLocked();
+    void waitForCallbacks(const std::shared_ptr<CallbackLifetime>& lifetime);
+    void waitForDeferredShutdown(const std::shared_ptr<CallbackLifetime>& lifetime);
+    static void dispatchDeferredShutdown(
+        const std::shared_ptr<CallbackLifetime>& lifetime,
+        LogosBlockchainNode* node,
+        std::optional<DeferredLifecycle> lifecycle
+    );
 
     [[nodiscard]] StdLogosResult startPrepared(const std::string& config_path, const std::string& deployment);
-    [[nodiscard]] StdLogosResult stopPrepared();
+    [[nodiscard]] StdLogosResult stopPrepared(
+        bool* shutdown_attempted = nullptr,
+        const LifecycleDispatch* deferred_dispatch = nullptr,
+        bool* shutdown_deferred = nullptr,
+        bool defer_nonreentrant = false
+    );
 
     [[nodiscard]] static const char* lifecycleStateName(LifecycleState state);
     [[nodiscard]] static std::vector<std::string> lifecycleActions(LifecycleState state);
@@ -307,6 +345,7 @@ private:
 
     // Static instance for C callback (C API doesn't support user data)
     static LogosBlockchainModule* s_instance;
+    static std::mutex s_instanceMutex;
 
     // C-compatible callback function
     static void on_new_block_callback(const char* block);

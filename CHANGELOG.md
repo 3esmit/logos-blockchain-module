@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.9] - Alpha
+
+### Fixed
+
+- Use the forked blockchain C-binding shutdown API without crashing on node
+  teardown.
+- Keep configuration generation and Blend joins compatible with the current
+  blockchain C-binding ABI.
+
 ## [0.2.8] - Alpha
 
 ### Added
