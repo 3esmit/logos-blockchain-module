@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10] - Alpha
+
+### Fixed
+
+- Track the current Testnet blockchain peer protocol so Basecamp nodes can
+  bootstrap against live peers.
+
 ## [0.2.9] - Alpha
 
 ### Fixed
