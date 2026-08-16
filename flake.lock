@@ -281,17 +281,17 @@
         "rust-rapidsnark": "rust-rapidsnark"
       },
       "locked": {
-        "lastModified": 1786906115,
-        "narHash": "sha256-VZ/DYvD+ZrGAgkwOmzUzwBrrOShD1FRQfpPbaLgiavg=",
+        "lastModified": 1786912816,
+        "narHash": "sha256-bcCp8O9mBeg07JMSE4caAikBa8LTWxwS98Lo4bu34uA=",
         "owner": "3esmit",
         "repo": "logos-blockchain",
-        "rev": "cb9abd64b40e7831335e576837bbfbf6fbd98831",
+        "rev": "784095da8f1465e487970731ce69a5a71c4d2e18",
         "type": "github"
       },
       "original": {
         "owner": "3esmit",
         "repo": "logos-blockchain",
-        "rev": "cb9abd64b40e7831335e576837bbfbf6fbd98831",
+        "rev": "784095da8f1465e487970731ce69a5a71c4d2e18",
         "type": "github"
       }
     },
@@ -300,17 +300,17 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1785937360,
-        "narHash": "sha256-Id4IZ1pQ5qcTabs4fFWbfSZPHEbyDAx/3CDKv4CawII=",
+        "lastModified": 1781004244,
+        "narHash": "sha256-zd4XYY+HPOMJXigHQDmXDvt7D1988YNPUwPPznhpFdA=",
         "owner": "logos-blockchain",
         "repo": "logos-blockchain-circuits",
-        "rev": "32f1ac43f331f0eeff3a2a0aec0f153564d03583",
+        "rev": "2846ee7a4cfa24458bb8063412ab2e753b344d2f",
         "type": "github"
       },
       "original": {
         "owner": "logos-blockchain",
-        "ref": "v0.5.5",
         "repo": "logos-blockchain-circuits",
+        "rev": "2846ee7a4cfa24458bb8063412ab2e753b344d2f",
         "type": "github"
       }
     },
