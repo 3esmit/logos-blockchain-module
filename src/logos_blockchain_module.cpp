@@ -1862,7 +1862,14 @@ StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& js
 
     const OwnedGenerateConfigArgs owned_args(parsed_args);
 
-    OperationStatus status = ::generate_user_config(owned_args.ffi_args);
+    OperationStatus status;
+    if (parsed_args.contains("prolonged_bootstrap_period_secs") &&
+        parsed_args["prolonged_bootstrap_period_secs"].is_number_unsigned()) {
+        const uint64_t period_secs = parsed_args["prolonged_bootstrap_period_secs"].get<uint64_t>();
+        status = ::generate_user_config_with_bootstrap_period(owned_args.ffi_args, &period_secs);
+    } else {
+        status = ::generate_user_config(owned_args.ffi_args);
+    }
     if (!is_ok(&status)) {
         return result::err(operation_status::take_message(status));
     }

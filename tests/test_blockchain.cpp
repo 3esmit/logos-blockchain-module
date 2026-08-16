@@ -641,6 +641,7 @@ extern std::string g_lastGeneratedStatePath;
 extern std::string g_lastGeneratedStoragePath;
 extern std::string g_lastGeneratedLogsPath;
 extern int g_lastGeneratedIbd;
+extern uint64_t g_lastGeneratedBootstrapPeriod;
 extern uint64_t g_lastFinalizedBlocksRangeFromSlot;
 extern uint64_t g_lastFinalizedBlocksRangeToSlot;
 extern uint64_t g_lastFinalizedBlocksRangeLimit;
@@ -665,6 +666,7 @@ static void clearGeneratedPaths() {
     g_lastGeneratedStoragePath.clear();
     g_lastGeneratedLogsPath.clear();
     g_lastGeneratedIbd = -1;
+    g_lastGeneratedBootstrapPeriod = 0;
 }
 
 // Basecamp opts in with the flag: output and state/storage/logs are routed under
@@ -859,6 +861,18 @@ LOGOS_TEST(generate_user_config_preserves_skip_ibd_and_legacy_ibd_inputs) {
     clearGeneratedPaths();
     LOGOS_ASSERT_TRUE(module.generate_user_config("{}").success);
     LOGOS_ASSERT_EQ(g_lastGeneratedIbd, 1);
+}
+
+LOGOS_TEST(generate_user_config_forwards_bootstrap_period_override) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    t.mockCFunction("generate_user_config_with_bootstrap_period").returns(0);
+
+    clearGeneratedPaths();
+    LOGOS_ASSERT_TRUE(module.generate_user_config(
+        R"({"prolonged_bootstrap_period_secs":5})"
+    ).success);
+    LOGOS_ASSERT_EQ(g_lastGeneratedBootstrapPeriod, static_cast<uint64_t>(5));
 }
 
 // ============================================================================
