@@ -1,0 +1,209 @@
+name: "Generating and Inspecting a Logos Blockchain Node Config"
+output: blockchain-module-config.md
+release: ""
+
+intro: |
+  `blockchain_module` wraps the [`logos-blockchain`](https://github.com/logos-blockchain/logos-blockchain)
+  node as a Logos module. Before a node can run it needs a **user config** — a YAML
+  file describing the keystore, the network ports, the bootstrap peers to sync
+  from, and where the node keeps its state, database and logs.
+
+  The module generates that file for you through `generate_user_config`, so the
+  operator never has to hand-write YAML. This doc-test drives that call through
+  the headless `logoscore` daemon and inspects what comes out, then shows what
+  happens when you try to generate a second config into the same instance.
+
+  > No node is started here — config generation is entirely local and needs no
+  > network. For starting and stopping a node see the companion
+  > [`blockchain-module-runtime`](./blockchain-module-runtime.md) doc-test.
+
+what_you_build: "A generated `user_config.yaml` for a Logos blockchain node, produced through the module's `generate_user_config` call and inspected for the values that were asked for."
+
+what_you_learn:
+  - How a Logos module is packaged as `.lgx` and installed with `lgpm`
+  - How to call a module's methods headlessly through the `logoscore` daemon
+  - What `generate_user_config` writes, and which knobs it accepts
+  - Why a second generation into the same instance is refused, and what to use instead
+  - Why the generated config's paths land under the module's own per-instance directory
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled (see [nixos.org](https://nixos.org/download.html)).
+  - "**A Linux or macOS machine.** Nothing here needs a display or a network peer."
+
+sections:
+  - title: "Build the Logos daemon"
+    step: true
+    text: |
+      Build the Logos runtime CLI from its published flake. The result outputs a
+      binary named `logoscore` under a symlinked directory named `./logos`.
+      `logoscore` is the headless frontend for
+      [`logos-liblogos`](https://github.com/logos-co/logos-liblogos) — it brings in
+      the whole module-runtime stack we need to load and call the module.
+    steps:
+      - title: "Build the CLI"
+        run: "nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos"
+        code_block: |
+          nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos
+        check_file: "logos/bin/logoscore"
+        post_text: |
+          The build produces `logos/bin/logoscore` plus bundled runtime libraries
+          and a `logos/modules/` directory containing the built-in
+          `capability_module` (required for the auth handshake when loading
+          modules).
+
+  - title: "Build the lgpm package manager"
+    step: true
+    text: |
+      `lgpm` installs `.lgx` packages into a modules directory so the daemon can
+      discover them.
+    steps:
+      - title: "Build lgpm"
+        run: "nix build 'github:logos-co/logos-package-manager' --out-link ./lgpm"
+        code_block: |
+          nix build 'github:logos-co/logos-package-manager' --out-link ./lgpm
+        check_file: "lgpm/bin/lgpm"
+
+  - title: "Build and install the blockchain module"
+    step: true
+    text: |
+      The module's flake exposes an `.lgx` package — the Logos distribution format.
+      Building it compiles the Qt plugin *and* the bundled `logos_blockchain`
+      native library it links against, so this step is the slow one.
+    steps:
+      - title: "Build the .lgx package"
+        run: "nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' --out-link ./blockchain-lgx"
+        code_block: |
+          nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' --out-link ./blockchain-lgx
+
+      - title: "Install it into a modules directory"
+        text: "Install the package so the daemon can find it:"
+        run: "./lgpm/bin/lgpm --modules-dir ./modules install --dir ./blockchain-lgx"
+        code_block: |
+          lgpm --modules-dir ./modules install --dir ./blockchain-lgx
+        expect_contains:
+          - "blockchain_module"
+        check_file: "modules/blockchain_module/manifest.json"
+
+  - title: "Load the module in the daemon"
+    step: true
+    text: |
+      Start the daemon pointed at the modules directory, then load
+      `blockchain_module`. Loading only brings the plugin into the process — it
+      does **not** start a blockchain node.
+    steps:
+      - title: "Start the daemon"
+        run: "./logos/bin/logoscore stop >/dev/null 2>&1; sleep 2; ./logos/bin/logoscore daemon --modules-dir ./modules --persistence-path ./data >/dev/null 2>&1 &"
+        code_block: |
+          logoscore daemon --modules-dir ./modules --persistence-path ./data
+
+      - title: "Load the module"
+        run: "sleep 8; ./logos/bin/logoscore load-module blockchain_module"
+        code_block: |
+          logoscore load-module blockchain_module
+        expect_contains:
+          - "blockchain_module"
+
+      - title: "Inspect the methods it exposes"
+        text: |
+          `module-info` lists the `Q_INVOKABLE` methods — the same names you can
+          `call`. Note `generate_user_config`, `start`, `stop`, and the
+          `wallet_*` family:
+        run: "./logos/bin/logoscore module-info blockchain_module"
+        code_block: |
+          logoscore module-info blockchain_module
+        expect_contains:
+          - "generate_user_config"
+          - "start"
+          - "stop"
+
+  - title: "Generate a config with bootstrap peers"
+    step: true
+    text: |
+      `generate_user_config` takes a JSON object of arguments. Every field is
+      optional — an empty object produces a working default config. Here we pass
+      the two that matter most for joining a network: the bootstrap peers to sync
+      from, and the ports to listen on.
+
+      `use_persistence_paths` routes the config — and the node's `state`, `db`
+      and `logs` directories — under the module's own per-instance directory,
+      which is always writable. That is the safe default.
+    steps:
+      - title: "Write the arguments"
+        file:
+          path: gen-args.json
+          content: |
+            {
+              "initial_peers": [
+                "/ip4/65.109.51.37/udp/3000/quic-v1/p2p/12D3KooWFrouXfmrR4nsLMtE7wu15DoMJ6VtoUtHinREZCvbWHar"
+              ],
+              "net_port": 3000,
+              "blend_port": 3001,
+              "output": "user_config.yaml",
+              "use_persistence_paths": true
+            }
+
+      - title: "Generate the config"
+        run: "./logos/bin/logoscore call blockchain_module generate_user_config @gen-args.json"
+        code_block: |
+          logoscore call blockchain_module generate_user_config @gen-args.json
+        expect_contains:
+          - '"success":true'
+          - "user_config.yaml"
+        post_text: |
+          The call returns the absolute path of the file it wrote — that path is
+          what you hand to `start`, as the runtime doc-test does.
+
+          `output` is worth passing even though it is optional. Omit it and the
+          call still reports success but returns an **empty** path, leaving you
+          nothing to start the node with.
+
+  - title: "Generating a second config into the same instance"
+    step: true
+    text: |
+      A natural next move is to generate a *second* config — say a peerless one
+      with `skip_ibd: true` — alongside the first. That does **not** work, and the
+      error is worth seeing because it is the same one operators hit when they
+      re-run generation over an existing setup.
+
+      The keystore is created once per instance directory. A second
+      `generate_user_config` against the same instance refuses rather than
+      overwriting it:
+    steps:
+      - title: "Write the arguments"
+        file:
+          path: gen-args-solo.json
+          content: |
+            {
+              "skip_ibd": true,
+              "net_port": 3100,
+              "blend_port": 3101,
+              "output": "solo-user-config.yaml",
+              "use_persistence_paths": true
+            }
+
+      - title: "Try to generate a second config"
+        run: "./logos/bin/logoscore call blockchain_module generate_user_config @gen-args-solo.json"
+        code_block: |
+          logoscore call blockchain_module generate_user_config @gen-args-solo.json
+        expect_contains:
+          - "Keystore file exists. Use `update` command."
+        post_text: |
+          Refusing is the right behaviour — silently regenerating a keystore would
+          discard the keys the previous config's node identity depends on. To
+          change an existing setup use `update_user_config`; to get a genuinely
+          separate configuration, use a separate instance directory.
+
+          This is also why `skip_ibd` is demonstrated in the companion
+          [`blockchain-module-runtime`](./blockchain-module-runtime.md) doc-test
+          rather than here: that spec generates exactly one config, with
+          `skip_ibd: true`, and then starts a node from it.
+
+  - title: "Shut down"
+    step: true
+    text: "Stop the daemon. No node was ever started, so there is nothing else to clean up."
+    steps:
+      - title: "Stop the daemon"
+        run: "./logos/bin/logoscore stop"
+        code_block: |
+          logoscore stop
