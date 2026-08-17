@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.11] - Alpha
+
+### Fixed
+
+- Repin the Testnet blockchain source to the deployed 0.2.2 network profile.
+
 ## [0.2.10] - Alpha
 
 ### Fixed

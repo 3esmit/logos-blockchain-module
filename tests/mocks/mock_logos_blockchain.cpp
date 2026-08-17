@@ -20,6 +20,7 @@ std::string g_lastGeneratedStatePath;
 std::string g_lastGeneratedStoragePath;
 std::string g_lastGeneratedLogsPath;
 int g_lastGeneratedIbd = -1;
+uint64_t g_lastGeneratedBootstrapPeriod = 0;
 uint64_t g_lastFinalizedBlocksRangeFromSlot = 0;
 uint64_t g_lastFinalizedBlocksRangeToSlot = 0;
 uint64_t g_lastFinalizedBlocksRangeLimit = 0;
@@ -100,6 +101,15 @@ OperationStatus generate_user_config(GenerateConfigArgs args) {
     // current C API's `skip_ibd` field.
     g_lastGeneratedIbd = args.skip_ibd ? (*args.skip_ibd ? 0 : 1) : -1;
     return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config"));
+}
+
+OperationStatus generate_user_config_with_bootstrap_period(
+    GenerateConfigArgs args,
+    const uint64_t* period_secs
+) {
+    LOGOS_CMOCK_RECORD("generate_user_config_with_bootstrap_period");
+    g_lastGeneratedBootstrapPeriod = period_secs ? *period_secs : 0;
+    return make_status(LOGOS_CMOCK_RETURN(int, "generate_user_config_with_bootstrap_period"));
 }
 
 NodeResult start_lb_node(const char* config_path, const char* deployment) {

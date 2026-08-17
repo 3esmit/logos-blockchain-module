@@ -169,6 +169,10 @@ bool is_ok(const OperationStatus* status);
 
 // Lifecycle
 OperationStatus generate_user_config(GenerateConfigArgs args);
+OperationStatus generate_user_config_with_bootstrap_period(
+    GenerateConfigArgs args,
+    const uint64_t* period_secs
+);
 NodeResult start_lb_node(const char* config_path, const char* deployment);
 OperationStatus shutdown_node(LogosBlockchainNode* node);
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback);
