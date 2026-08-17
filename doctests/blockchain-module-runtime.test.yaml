@@ -1,0 +1,321 @@
+name: "Starting and Stopping a Logos Blockchain Node"
+output: blockchain-module-runtime.md
+release: ""
+
+intro: |
+  This doc-test takes the config produced in
+  [`blockchain-module-config`](./blockchain-module-config.md) and actually runs a
+  node with it: start, query the chain state, read the wallet's known addresses,
+  and stop again.
+
+  It runs the node **with no bootstrap peers** (`skip_ibd: true`). That is
+  deliberate. A node configured with peers spends its startup trying to fetch a
+  chain tip from each one, and if none answer it aborts bootstrap — so a test
+  that depends on a live network is a test that fails whenever the network moves,
+  the peers rotate, or the node's chainsync protocol version changes. With IBD
+  skipped the node comes up against its own genesis state in well under a second
+  and every assertion below is deterministic.
+
+  What that buys you is coverage of the whole local lifecycle: every service
+  reaching ready, the wallet initialising, the chain state being queryable, and a
+  clean shutdown. What it does not cover is syncing from a real network — see the
+  note at the end.
+
+what_you_build: "A running Logos blockchain node, started headlessly from a generated config, queried for its chain and wallet state, and shut down cleanly."
+
+what_you_learn:
+  - How to start and stop a blockchain node through the module's API
+  - Which services the node brings up, and what "ready" looks like for each
+  - How to read chain state with `get_cryptarchia_info`
+  - How the wallet exposes its known addresses and their balances
+  - Why skipping IBD is the right choice for a reproducible test, and what it leaves untested
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled (see [nixos.org](https://nixos.org/download.html)).
+  - "**A Linux or macOS machine.** No display and no network peers are required."
+
+sections:
+  - title: "Build the tools and install the module"
+    step: true
+    text: |
+      Same preparation as the [config doc-test](./blockchain-module-config.md):
+      the runtime CLI, the package manager, and this commit of the module
+      packaged as an `.lgx`. Building the `.lgx` compiles the bundled
+      `logos_blockchain` native library, so it is the slow step.
+    steps:
+      - title: "Build the Logos daemon CLI"
+        run: "nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos"
+        code_block: |
+          nix build 'github:logos-co/logos-logoscore-cli' --out-link ./logos
+        check_file: "logos/bin/logoscore"
+
+      - title: "Build lgpm"
+        run: "nix build 'github:logos-co/logos-package-manager' --out-link ./lgpm"
+        code_block: |
+          nix build 'github:logos-co/logos-package-manager' --out-link ./lgpm
+        check_file: "lgpm/bin/lgpm"
+
+      - title: "Build the module's .lgx package"
+        run: "nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' --out-link ./blockchain-lgx"
+        code_block: |
+          nix build 'github:logos-blockchain/logos-blockchain-module{release}#lgx' --out-link ./blockchain-lgx
+
+      - title: "Install it into a modules directory"
+        run: "./lgpm/bin/lgpm --modules-dir ./modules install --dir ./blockchain-lgx"
+        code_block: |
+          lgpm --modules-dir ./modules install --dir ./blockchain-lgx
+        expect_contains:
+          - "blockchain_module"
+        check_file: "modules/blockchain_module/manifest.json"
+
+  - title: "Start the daemon and load the module"
+    step: true
+    text: |
+      Run the daemon and load the plugin. Loading brings the plugin into the
+      process — it does **not** start a blockchain node.
+    steps:
+      - title: "Start the daemon"
+        run: "./logos/bin/logoscore stop >/dev/null 2>&1; sleep 2; ./logos/bin/logoscore daemon --modules-dir ./modules --persistence-path ./data >/dev/null 2>&1 &"
+        code_block: |
+          logoscore daemon --modules-dir ./modules --persistence-path ./data
+
+      - title: "Load the module"
+        run: "sleep 8; ./logos/bin/logoscore load-module blockchain_module"
+        code_block: |
+          logoscore load-module blockchain_module
+        expect_contains:
+          - "blockchain_module"
+
+  - title: "Confirm the node is not running yet"
+    step: true
+    text: |
+      Every node-dependent call guards on a running node and reports so plainly.
+      This is worth seeing before starting, because it is the error you will meet
+      most often in practice:
+    steps:
+      - title: "Ask for chain info with no node"
+        run: "./logos/bin/logoscore call blockchain_module get_cryptarchia_info"
+        code_block: |
+          logoscore call blockchain_module get_cryptarchia_info
+        expect_contains:
+          - "The node is not running."
+
+  - title: "Generate a solo config"
+    step: true
+    text: |
+      Generate a config with no bootstrap peers. `skip_ibd` empties the IBD peer
+      list, so the node will skip Initial Block Download rather than attempt to
+      sync from anyone.
+    steps:
+      - title: "Write the arguments"
+        file:
+          path: runtime-args.json
+          content: |
+            {
+              "skip_ibd": true,
+              "net_port": 3200,
+              "blend_port": 3201,
+              "output": "user_config.yaml",
+              "use_persistence_paths": true
+            }
+
+      - title: "Generate it"
+        run: "./logos/bin/logoscore call blockchain_module generate_user_config @runtime-args.json"
+        code_block: |
+          logoscore call blockchain_module generate_user_config @runtime-args.json
+        expect_contains:
+          - '"success":true'
+          - "user_config.yaml"
+        post_text: |
+          `output` matters here. Omit it and the call still succeeds but returns an
+          empty path, leaving you nothing to hand to `start`. Give it a relative
+          path and the module resolves it under the instance's persistence
+          directory and returns the absolute path it wrote.
+
+      - title: "Confirm skip_ibd emptied the peer list"
+        text: |
+          `skip_ibd` writes an empty IBD peer list into the config, which is what
+          makes the node skip bootstrap rather than try to sync:
+        run: "CFG=$(find . $HOME/.logoscore -name user_config.yaml -path '*blockchain_module*' 2>/dev/null | head -1); echo using $CFG; grep -A1 'ibd:' $CFG"
+        code_block: |
+          grep -A1 'ibd:' <generated>/user_config.yaml
+        expect_contains:
+          - "peers: []"
+
+      - title: "Shorten the bootstrap period"
+        text: |
+          A generated config carries `prolonged_bootstrap_period: '3600.000000000'`
+          — the node stays in `Bootstrapping` mode for a full hour before
+          switching to `Online`. That is sensible for joining a real network and
+          useless for a test, so patch it down. `generate_user_config` does not
+          expose this knob, so we edit the YAML directly.
+        run: "CFG=$(find . $HOME/.logoscore -name user_config.yaml -path '*blockchain_module*' 2>/dev/null | head -1); sed \"s/prolonged_bootstrap_period: '3600.000000000'/prolonged_bootstrap_period: '5.000000000'/\" $CFG > $CFG.tmp && mv $CFG.tmp $CFG && grep -n prolonged_bootstrap_period $CFG"
+        code_block: |
+          # sed -i differs between GNU and BSD/macOS, so write and move instead.
+          sed "s/prolonged_bootstrap_period: '3600.000000000'/prolonged_bootstrap_period: '5.000000000'/" \
+            <generated>/user_config.yaml > tmp && mv tmp <generated>/user_config.yaml
+        expect_contains:
+          - "prolonged_bootstrap_period: '5.000000000'"
+
+  - title: "Start the node"
+    step: true
+    text: |
+      `start` takes the config path and a deployment name. Passing an empty
+      deployment uses the built-in default.
+
+      The node brings its services up in order — tracing, storage, network,
+      cryptarchia, wallet, mempool. Because IBD is skipped there is no bootstrap
+      phase to wait through, so `start` returns once the runtime is up.
+    steps:
+      - title: "Start it"
+        run: "CFG=$(find . $HOME/.logoscore -name user_config.yaml -path '*blockchain_module*' 2>/dev/null | head -1); ./logos/bin/logoscore call blockchain_module start $CFG ''"
+        code_block: |
+          logoscore call blockchain_module start <generated>/user_config.yaml ""
+        expect_contains:
+          - '"success":true'
+        post_text: |
+          The daemon's output records the startup sequence. Three lines are worth
+          knowing, because they are the ones that distinguish a healthy peerless
+          start from the failures you meet in practice:
+
+          ```
+          chain::service: genesis time is already in the past: finishing AwaitingGenesisTime phase with no-op
+          bootstrap::ibd: Skipping IBD as no peers are configured
+          chain_network_service: Initial Block Download completed successfully
+          ```
+
+          The first confirms the generated config's genesis is already live — a
+          config whose genesis is in the *future* parks the node in
+          `AwaitingGenesisTime` indefinitely, with no error to explain it. The
+          second and third are `skip_ibd` doing its job: bootstrap is bypassed
+          rather than attempted and failed.
+
+  - title: "Query the chain"
+    step: true
+    text: |
+      With the node up, `get_cryptarchia_info` reports the consensus state: the
+      current tip, the last immutable block, and the slot. On a freshly started
+      node with nothing synced, tip and LIB are both genesis.
+    steps:
+      - title: "Read chain state"
+        run: "./logos/bin/logoscore call blockchain_module get_cryptarchia_info"
+        code_block: |
+          logoscore call blockchain_module get_cryptarchia_info
+        expect_contains:
+          - '"success":true'
+          - '"mode\":\"Bootstrapping'
+        post_text: |
+          The reply carries `height`, `slot`, `tip`, `lib` and `mode`. Immediately
+          after start the mode is `Bootstrapping`.
+
+      - title: "Wait for the chain to come Online"
+        text: |
+          After the (shortened) prolonged-bootstrap period the mode flips to
+          `Online`. This is the transition the blend service is waiting on when it
+          logs *"Waiting for chain to become Online mode"*.
+        run: "sleep 15 && ./logos/bin/logoscore call blockchain_module get_cryptarchia_info"
+        code_block: |
+          logoscore call blockchain_module get_cryptarchia_info
+        expect_contains:
+          - '"mode\":\"Online'
+        post_text: |
+          Note `height` and `slot` are still `0`. A node with no peers reaches
+          `Online` but does not by itself start producing blocks — see the closing
+          section.
+
+  - title: "Read the wallet"
+    step: true
+    text: |
+      The wallet is initialised from the keystore in the generated config, so it
+      knows its addresses immediately — no sync required. Balances are a separate
+      lookup against the ledger, and on an unsynced chain they reflect genesis
+      state only.
+    steps:
+      - title: "List known addresses"
+        run: "./logos/bin/logoscore call blockchain_module wallet_get_known_addresses"
+        code_block: |
+          logoscore call blockchain_module wallet_get_known_addresses
+        expect_contains:
+          - '"success":true'
+        post_text: |
+          Five addresses, returned as a JSON array. These are what the module's UI
+          lists in its Accounts panel, and the ones it then queries balances for
+          one at a time.
+
+      - title: "Ask for a balance before the chain has synced"
+        text: |
+          Feed one of those addresses straight back into `wallet_get_balance`.
+          On a node that has not synced, the call **fails** — even though the
+          address came from the module's own list a moment earlier:
+        run: "./logos/bin/logoscore call blockchain_module wallet_get_balance \"$(./logos/bin/logoscore call blockchain_module wallet_get_known_addresses | grep -o '[0-9a-f]\\{64\\}' | head -1)\""
+        code_block: |
+          ADDR=$(logoscore call blockchain_module wallet_get_known_addresses | grep -o '[0-9a-f]\{64\}' | head -1)
+          logoscore call blockchain_module wallet_get_balance "$ADDR"
+        expect_contains:
+          - "Unknown wallet address."
+        post_text: |
+          Two different notions of "known" are in play: the wallet holds the
+          *key*, but the *ledger* has no entry for that address until the chain
+          has progressed far enough to contain one. The error wording describes
+          the second and reads like the first, which is why it looks — wrongly —
+          like a malformed address.
+
+          This is asserted here deliberately. It is the current behaviour, it is
+          reachable in seconds without a network, and it is the single most
+          confusing thing a new operator meets. If the node later returns `0` or a
+          distinct "not synced" error instead, this assertion should fail and be
+          updated — which is exactly what a doc-test is for.
+
+  - title: "Stop the node"
+    step: true
+    text: "Shut the node down. `stop` is idempotent in the sense that stopping an already-stopped node reports plainly rather than failing hard."
+    steps:
+      - title: "Stop it"
+        run: "./logos/bin/logoscore call blockchain_module stop"
+        code_block: |
+          logoscore call blockchain_module stop
+        expect_contains:
+          - '"success":true'
+
+      - title: "Confirm it is down"
+        run: "./logos/bin/logoscore call blockchain_module get_cryptarchia_info"
+        code_block: |
+          logoscore call blockchain_module get_cryptarchia_info
+        expect_contains:
+          - "The node is not running."
+
+      - title: "Stop the daemon"
+        run: "./logos/bin/logoscore stop"
+        code_block: |
+          logoscore stop
+
+  - title: "What this does not cover"
+    text: |
+      Skipping IBD keeps this doc-test fast and deterministic. What it leaves out
+      was established by running it, not assumed:
+
+      - **The chain does not advance.** A peerless node reaches `Online` and then
+        stays at `height: 0`, `slot: 0` indefinitely — observed over several
+        minutes. Genesis being in the past and bootstrap completing are not
+        sufficient to make a lone node produce blocks. So **block streams,
+        non-zero balances and transfers cannot be asserted here**, and this
+        doc-test does not pretend to.
+      - **Syncing from peers.** Bootstrap, block download and the chainsync
+        protocol handshake are never exercised. A node whose peers speak a
+        different chainsync version fails with `AllPeersFailed` — a real and
+        common failure, reachable only against a live network.
+
+      Covering transactions therefore needs either a multi-node fixture or
+      whatever the node uses to make a single node leader-eligible. The node's own
+      cucumber suite (`tests/src/cucumber`) already runs manual-node scenarios
+      with deployment overrides such as
+      `time.chain_start_time = now_plus_seconds(0)`, and is the better place to
+      look before attempting it here.
+
+      Two knobs that are *not* reachable through `generate_user_config` and had to
+      be patched into the YAML directly — worth exposing on the FFI if this
+      pattern is repeated:
+
+      - `prolonged_bootstrap_period` (the hour-long `Bootstrapping` hold)
+      - `time.chain_start_time` (deployment-side, controls genesis)
