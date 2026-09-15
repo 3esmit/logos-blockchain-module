@@ -33,7 +33,8 @@ name: blockchain-module Doc-Tests
 #
 # Note: pull requests opened from forks get a read-only GITHUB_TOKEN, so the
 # Pages push and PR comment are skipped for them — the downloadable artifact is
-# still produced.
+# still produced. Fork PRs are pinned to the fork's head repository and commit
+# for the package build, so the lifecycle spec exercises the change under test.
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -80,36 +81,55 @@ jobs:
           name: logos-co
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      # Resolve the commit under test. For pull requests this is the PR's head
-      # commit (not the synthetic merge commit); for pushes it's the pushed
-      # commit. Passed to --release-for below so the doc-test packages THIS
-      # commit of logos-blockchain-module instead of the latest published flake.
-      #
-      # Fork PRs are the exception: their head commit lives in the fork, not in
-      # logos-blockchain/logos-blockchain-module, so nix could not fetch
-      # `github:logos-blockchain/logos-blockchain-module/<sha>`. We blank the SHA
-      # for forks (--release-for repo= → pins that repo to latest), so the
-      # doc-test still runs for fork PRs, just against master.
+      # Resolve the commit and repository under test. For pull requests this is
+      # the PR's head commit (not the synthetic merge commit); for pushes it's
+      # the pushed commit. Both values are passed below so the doc-test
+      # packages THIS commit of logos-blockchain-module instead of a moving
+      # latest branch. Fork PRs use the fork's repository because the head SHA
+      # does not exist in the upstream repository.
       - name: Resolve commit under test
         id: commit
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_IS_FORK: ${{ github.event.pull_request.head.repo.fork || false }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && \
-             [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
-            echo "sha=" >> "$GITHUB_OUTPUT"
-            echo "Fork PR detected — doc-test will run against latest master."
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_IS_FORK" = "true" ]; then
+            repository="$HEAD_REPOSITORY"
+            echo "Fork PR detected — pinning doc-test to $repository@$HEAD_SHA."
           else
-            echo "sha=${{ github.event.pull_request.head.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+            repository="$WORKFLOW_REPOSITORY"
           fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      # Specs keep the canonical upstream URL for published documentation.
+      # Fork PRs need the same commands rewritten to the fork repository before
+      # Nix resolves the pinned head commit. The generated copies are disposable
+      # and are used for both execution and markdown verification.
+      - name: Prepare doc-test specs
+        env:
+          MODULE_REPOSITORY: ${{ steps.commit.outputs.repository }}
+        run: |
+          set -euo pipefail
+          spec_dir="${RUNNER_TEMP}/blockchain-doctest-specs"
+          mkdir -p "$spec_dir"
+          for spec in blockchain-module-config blockchain-module-runtime; do
+            sed "s|github:logos-blockchain/logos-blockchain-module|github:${MODULE_REPOSITORY}|g" \
+              "doctests/$spec.test.yaml" > "$spec_dir/$spec.test.yaml"
+          done
+          echo "SPEC_DIR=$spec_dir" >> "$GITHUB_ENV"
 
       # The runner is the shared `doctest` CLI, invoked directly via its flake
       # (github:logos-co/logos-doctest). The flake bundles Python + PyYAML
       # (+ rich), so no pip install step is needed.
       #
       # --release-for pins the {release} placeholder for logos-blockchain-module
-      # to the commit under test, so
-      # `github:logos-blockchain/logos-blockchain-module{release}` in the spec
-      # becomes `.../<sha>`. Every other repo URL still resolves to latest.
+      # to the commit under test. Every other repo URL still resolves to latest.
       - name: Run blockchain-module doc-tests
         run: |
           # Both specs run in one invocation so they share a single --report.
@@ -121,8 +141,8 @@ jobs:
           # run in per-spec temp workdirs and still land in one --report.
 
           nix run github:logos-co/logos-doctest -- run \
-            doctests/blockchain-module-config.test.yaml \
-            doctests/blockchain-module-runtime.test.yaml \
+            "$SPEC_DIR/blockchain-module-config.test.yaml" \
+            "$SPEC_DIR/blockchain-module-runtime.test.yaml" \
             --verbose \
             --continue-on-fail \
             --release-for logos-blockchain-module=${{ steps.commit.outputs.sha }} \
@@ -152,7 +172,7 @@ jobs:
         run: |
           for spec in blockchain-module-config blockchain-module-runtime; do
             nix run github:logos-co/logos-doctest -- generate \
-              "doctests/$spec.test.yaml" \
+              "$SPEC_DIR/$spec.test.yaml" \
               --release-for logos-blockchain-module=${{ steps.commit.outputs.sha }} \
               -o "/tmp/$spec.md"
             test -s "/tmp/$spec.md"
@@ -238,28 +258,3 @@ jobs:
           script: |
             const base = "${{ steps.arrange.outputs.base }}";
             const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const root = `https://${owner}.github.io/${repo}/${base}`;
-            const oses = "${{ steps.arrange.outputs.found }}".trim().split(/\s+/).filter(Boolean);
-
-            const links = oses.map(os => `- [\`${os}\` report](${root}/${os}/)`).join("\n");
-            const marker = "<!-- blockchain-doctest-report-links -->";
-            const body =
-              `${marker}\n` +
-              `### 📊 blockchain-module doc-test report\n\n` +
-              `This commit of the blockchain module, packaged as an \`.lgx\` and ` +
-              `driven through a logoscore daemon — config generation and a full ` +
-              `node lifecycle — rendered alongside the commands actually run and ` +
-              `their output (updated each run, commit \`${context.sha.slice(0,7)}\`):\n\n` +
-              `${links}\n\n` +
-              `_Pages can take a minute to update after the run finishes._`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner, repo, issue_number: context.issue.number, per_page: 100,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: context.issue.number, body });
-            }
