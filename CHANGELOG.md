@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.12] - Alpha
+
+### Fixed
+
+- Pin the release 0.2.4 blockchain runtime with the maintained module's guarded
+  catalog, diagnostic, genesis-identity and shutdown C APIs.
+- Align the packaged Testnet protocol check with the selected release deployment.
+
 ## [0.2.11] - Alpha
 
 ### Fixed
