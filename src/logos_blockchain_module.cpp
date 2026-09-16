@@ -2014,7 +2014,6 @@ StdLogosResult LogosBlockchainModule::get_peer_id(const std::string& config_path
 
 StdLogosResult LogosBlockchainModule::wallet_get_balance(const std::string& address_hex) const {
     std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
-    fprintf(stderr, "wallet_get_balance: address_hex=%s\n", address_hex.c_str());
     if (!node) {
         return result::err("The node is not running.");
     }
@@ -2191,7 +2190,12 @@ StdLogosResult LogosBlockchainModule::leader_claim() const {
         return result::err(operation_status::take_message(error));
     }
 
-    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES));
+    const std::string tx_hash = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES);
+    // A claim is submitted asynchronously and cannot be reconstructed from
+    // local state after the call returns. Keep the returned identifier in the
+    // host log so operators can correlate the submission with chain events.
+    fprintf(stderr, "leader_claim: tx_hash=%s\n", tx_hash.c_str());
+    return result::ok(tx_hash);
 }
 
 // Channel
