@@ -3,7 +3,7 @@
 
   inputs = {
     logos-module-builder.url = "github:3esmit/logos-module-builder?rev=324b459c3f7b59171d249f3ccbcc362403b3fcaf";
-    logos-blockchain.url = "github:3esmit/logos-blockchain?rev=82a7b31ee4108262a9025ac41c5a41db6fd5ad00";
+    logos-blockchain.url = "github:3esmit/logos-blockchain?rev=72da7c777142f586322933d499ee2de7a391e204";
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
@@ -61,7 +61,7 @@
               core="$payload/variants/${variant}/liblogos_blockchain.${libExt}"
               test -f "$core"
               ${pkgs.binutils}/bin/strings "$core" > "$TMPDIR/protocols"
-              ${pkgs.gnugrep}/bin/grep -Fq -- 'chain_sync_protocol_name: /logos-blockchain-testnet-0.2.1/chainsync/1.0.0' "$TMPDIR/protocols"
+              ${pkgs.gnugrep}/bin/grep -Fq -- 'chain_sync_protocol_name: /logos-blockchain-testnet-0.2.4/chainsync/1.0.0' "$TMPDIR/protocols"
               if ${pkgs.gnugrep}/bin/grep -Fq -- 'chain_sync_protocol_name: /logos-blockchain/chainsync/X.Y.Z' "$TMPDIR/protocols"; then
                 exit 1
               fi
