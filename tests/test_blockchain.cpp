@@ -1534,6 +1534,24 @@ LOGOS_TEST(get_blocks_returns_json_on_success) {
     delete module;
 }
 
+LOGOS_TEST(get_blocks_normalizes_core_transaction_id_to_mantle_hash) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    const std::string transaction_id(64, 'd');
+    const std::string response =
+        R"([{"slot":1,"transactions":[{"id":")" + transaction_id + R"(","mantle_tx":{"ops":[]}}]}])";
+    t.mockCFunction("get_blocks").returns(response);
+    t.mockCFunction("get_blocks_error").returns(0);
+
+    StdLogosResult result = module->get_blocks(1, 10);
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.value.get<std::string>(), "\"hash\":\"" + transaction_id + "\""));
+    delete module;
+}
+
 LOGOS_TEST(get_blocks_returns_error_on_ffi_failure) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;

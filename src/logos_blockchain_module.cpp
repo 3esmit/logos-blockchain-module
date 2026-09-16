@@ -113,6 +113,48 @@ namespace {
         return out;
     }
 
+    // Older C bindings serialize block transactions with the canonical
+    // envelope `id` but omit the same identity from `mantle_tx.hash`. Keep the
+    // module response compatible with the HTTP block DTO without rewriting
+    // otherwise untouched payloads.
+    bool normalize_block_transaction_hashes(json& block) {
+        if (!block.is_object()) {
+            return false;
+        }
+        auto transactions = block.find("transactions");
+        if (transactions == block.end() || !transactions->is_array()) {
+            return false;
+        }
+
+        bool normalized = false;
+        for (json& transaction : *transactions) {
+            if (!transaction.is_object()) {
+                continue;
+            }
+            const auto id = transaction.find("id");
+            auto mantle_transaction = transaction.find("mantle_tx");
+            if (id == transaction.end() || !id->is_string() || mantle_transaction == transaction.end() ||
+                !mantle_transaction->is_object()) {
+                continue;
+            }
+
+            const auto hash = mantle_transaction->find("hash");
+            const bool missing_hash = hash == mantle_transaction->end() || hash->is_null() ||
+                                      (hash->is_string() && hash->get<std::string>().empty());
+            if (!missing_hash) {
+                continue;
+            }
+
+            const std::vector<uint8_t> hash_bytes = parse_address_hex(id->get<std::string>());
+            if (hash_bytes.empty()) {
+                continue;
+            }
+            (*mantle_transaction)["hash"] = bytes_to_hex(hash_bytes.data(), hash_bytes.size());
+            normalized = true;
+        }
+        return normalized;
+    }
+
     // Maps an `ed25519`/`zk` string (case-insensitive) to the C KeyType enum.
     bool parse_key_type(const std::string& s, KeyType& out) {
         std::string lower = s;
@@ -1168,6 +1210,24 @@ StdLogosResult LogosBlockchainModule::get_blocks(const uint64_t from_slot, const
     OperationStatus free_status = free_cstring(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free blocks string: %s\n", operation_status::take_message(free_status).c_str());
+    }
+
+    json blocks;
+    try {
+        blocks = json::parse(out);
+    } catch (const json::parse_error&) {
+        return result::ok(std::move(out));
+    }
+    if (!blocks.is_array()) {
+        return result::ok(std::move(out));
+    }
+
+    bool normalized = false;
+    for (json& block : blocks) {
+        normalized = normalize_block_transaction_hashes(block) || normalized;
+    }
+    if (normalized) {
+        return result::ok(blocks.dump());
     }
     return result::ok(std::move(out));
 }
