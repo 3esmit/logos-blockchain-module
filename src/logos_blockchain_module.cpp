@@ -63,6 +63,7 @@ namespace result {
 } // namespace result
 
 namespace {
+    constexpr auto STATE_DIR = "state";
     constexpr size_t MAX_TIP_PARENT_WALK_BLOCKS = 500;
     constexpr size_t MAX_NODE_LIFECYCLE_REQUEST_BYTES = 64 * 1024;
     constexpr size_t MAX_NODE_LIFECYCLE_CONFIG_BYTES = 48 * 1024;
@@ -174,6 +175,10 @@ namespace {
         if (!fs::is_regular_file(path, error) || error)
             return {};
         return path.lexically_normal().string();
+    }
+
+    fs::path state_dir(const std::string& persistence_path) {
+        return fs::path(persistence_path) / STATE_DIR;
     }
 
     // Use the C API type Hash (from logos_blockchain.h) to define address/hash byte size.
@@ -700,6 +705,66 @@ void LogosBlockchainModule::on_new_block_callback(const char* block) {
         event["block"] = std::string(block);
         instance->newBlock(event.dump());
     }
+}
+
+void LogosBlockchainModule::on_processed_block_callback(const char* event) {
+    LogosBlockchainModule* instance = nullptr;
+    std::shared_ptr<CallbackLifetime> lifetime;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        instance = s_instance;
+        if (!instance) {
+            return;
+        }
+        std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
+        if (!instance->node) {
+            return;
+        }
+        lifetime = instance->callbackLifetime;
+        std::lock_guard<std::mutex> callback_lock(lifetime->mutex);
+        ++lifetime->inFlight;
+    }
+
+    struct CallbackScope {
+        std::shared_ptr<CallbackLifetime> lifetime;
+        ~CallbackScope() {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            --lifetime->inFlight;
+            lifetime->condition.notify_all();
+        }
+    } callback_scope{lifetime};
+
+    instance->processedBlock(event ? std::string(event) : std::string("null"));
+}
+
+void LogosBlockchainModule::on_lib_block_callback(const char* event) {
+    LogosBlockchainModule* instance = nullptr;
+    std::shared_ptr<CallbackLifetime> lifetime;
+    {
+        std::lock_guard<std::mutex> instance_lock(s_instanceMutex);
+        instance = s_instance;
+        if (!instance) {
+            return;
+        }
+        std::lock_guard<std::recursive_mutex> node_lock(instance->nodeMutex);
+        if (!instance->node) {
+            return;
+        }
+        lifetime = instance->callbackLifetime;
+        std::lock_guard<std::mutex> callback_lock(lifetime->mutex);
+        ++lifetime->inFlight;
+    }
+
+    struct CallbackScope {
+        std::shared_ptr<CallbackLifetime> lifetime;
+        ~CallbackScope() {
+            std::lock_guard<std::mutex> lock(lifetime->mutex);
+            --lifetime->inFlight;
+            lifetime->condition.notify_all();
+        }
+    } callback_scope{lifetime};
+
+    instance->libBlock(event ? std::string(event) : std::string("null"));
 }
 
 LogosBlockchainModule::LogosBlockchainModule()
@@ -1391,6 +1456,12 @@ StdLogosResult LogosBlockchainModule::startPrepared(const std::string& config_pa
     node_lock.lock();
     OperationStatus subscribe_status = subscribe_to_new_blocks(node, on_new_block_callback);
     if (is_ok(&subscribe_status)) {
+        subscribe_status = subscribe_to_processed_blocks(node, on_processed_block_callback);
+    }
+    if (is_ok(&subscribe_status)) {
+        subscribe_status = subscribe_to_lib_blocks(node, on_lib_block_callback);
+    }
+    if (is_ok(&subscribe_status)) {
         std::lock_guard<std::mutex> lock(lifecycleMutex);
         lifecycleConfigPath = effective_config_path;
         blendProviderIdentity = startup_blend_provider_identity;
@@ -1782,6 +1853,41 @@ std::string LogosBlockchainModule::nodeAction(const std::string& request) {
         settle_worker_failure();
     }
     return dispatch.acknowledgement;
+}
+
+StdLogosResult LogosBlockchainModule::does_state_exist() const {
+    const std::string& persistence_path = instancePersistencePath();
+    if (persistence_path.empty()) {
+        return result::err("This instance has no persistence path, so the module laid out no state directory.");
+    }
+
+    std::error_code error_code;
+    const fs::path path = state_dir(persistence_path);
+    const bool exists = fs::exists(path, error_code);
+    if (error_code) {
+        return result::err("Failed to check " + path.string() + ": " + error_code.message());
+    }
+    return result::ok(exists);
+}
+
+StdLogosResult LogosBlockchainModule::purge_state() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (node) {
+        return result::err("The node is running. Stop it before purging state.");
+    }
+
+    const std::string& persistence_path = instancePersistencePath();
+    if (persistence_path.empty()) {
+        return result::err("This instance has no persistence path, so the module laid out no state directory.");
+    }
+
+    std::error_code error_code;
+    const fs::path path = state_dir(persistence_path);
+    fs::remove_all(path, error_code);
+    if (error_code) {
+        return result::err("Failed to remove " + path.string() + ": " + error_code.message());
+    }
+    return result::ok();
 }
 
 StdLogosResult LogosBlockchainModule::generate_user_config(const std::string& json_args) const {
@@ -2180,6 +2286,52 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
     return result::ok(obj.dump());
 }
 
+StdLogosResult LogosBlockchainModule::wallet_get_leader_aged_notes(const std::string& optional_tip_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    std::vector<uint8_t> tip_bytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.empty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
+            return result::err("Invalid optional tip (64 hex characters or empty).");
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
+    }
+
+    auto [value, error] = get_leader_aged_notes(node, optional_tip);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    json obj;
+    obj["tip"] = bytes_to_hex(value.tip, TX_HASH_BYTES);
+    json notes = json::array();
+    for (size_t i = 0; i < value.len; ++i) {
+        const auto& [note_id, note_value, public_key] = value.notes[i];
+        notes.push_back({
+            {"id", bytes_to_hex(note_id, TX_HASH_BYTES)},
+            {"value", std::to_string(note_value)},
+            {"public_key", bytes_to_hex(public_key, ADDRESS_BYTES)},
+        });
+    }
+    obj["notes"] = std::move(notes);
+    obj["total_value"] = std::to_string(value.total_value);
+
+    OperationStatus free_status = free_leader_aged_notes(value);
+    if (!is_ok(&free_status)) {
+        fprintf(
+            stderr,
+            "Failed to free leader aged notes: %s\n",
+            operation_status::take_message(free_status).c_str()
+        );
+    }
+    return result::ok(obj.dump());
+}
+
 StdLogosResult LogosBlockchainModule::leader_claim() const {
     std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
@@ -2356,6 +2508,24 @@ StdLogosResult LogosBlockchainModule::channel_deposit_with_notes(
     return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), ADDRESS_BYTES));
 }
 
+StdLogosResult LogosBlockchainModule::get_channel_state(const std::string& channel_id_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    const std::vector<uint8_t> bytes = parse_address_hex(channel_id_hex);
+    if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Invalid channel_id (64 hex characters required).");
+    }
+
+    auto [value, error] = ::get_channel_state(node, bytes.data());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return copy_cstring_result(value, "get_channel_state");
+}
+
 StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
     std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
     if (!node) {
@@ -2379,12 +2549,41 @@ StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
         });
     }
 
+    obj["reward_amount"] = std::to_string(value.reward_amount);
+    obj["total_claimable"] = std::to_string(value.total_claimable);
+
     OperationStatus free_status = free_claimable_vouchers(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free claimable vouchers: %s\n", operation_status::take_message(free_status).c_str());
     }
 
     return result::ok(obj.dump());
+}
+
+StdLogosResult LogosBlockchainModule::wallet_fund_tx(const std::string& request_json) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::wallet_fund_tx(node, request_json.c_str());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return copy_cstring_result(value, "wallet_fund_tx");
+}
+
+StdLogosResult LogosBlockchainModule::submit_signed_transaction(const std::string& signed_tx_json) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::submit_signed_transaction(node, signed_tx_json.c_str());
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES));
 }
 
 // Blend
@@ -2450,6 +2649,32 @@ StdLogosResult LogosBlockchainModule::blend_join_as_core_node(
     std::string declaration_id = bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
     fprintf(stderr, "Successfully joined as a core node. DeclarationId: %s\n", declaration_id.c_str());
     return result::ok(std::move(declaration_id));
+}
+
+StdLogosResult LogosBlockchainModule::blend_info() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::blend_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return copy_cstring_result(value, "blend_info");
+}
+
+StdLogosResult LogosBlockchainModule::get_chain_id() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_chain_id(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return copy_cstring_result(value, "get_chain_id");
 }
 
 // Explorer
@@ -2699,6 +2924,24 @@ StdLogosResult LogosBlockchainModule::get_transaction(const std::string& tx_hash
     return normalize_transaction_json(raw.value.get<std::string>(), bytes_to_hex(bytes.data(), bytes.size()));
 }
 
+StdLogosResult LogosBlockchainModule::get_block_events(const std::string& header_id_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    const std::vector<uint8_t> bytes = parse_address_hex(header_id_hex);
+    if (bytes.empty() || static_cast<int>(bytes.size()) != ADDRESS_BYTES) {
+        return result::err("Header ID must be 64 hex characters (32 bytes).");
+    }
+
+    auto [value, error] = ::get_block_events(node, reinterpret_cast<const HeaderId*>(bytes.data()));
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return copy_cstring_result(value, "get_block_events");
+}
+
 // Cryptarchia
 
 StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
@@ -2752,5 +2995,93 @@ StdLogosResult LogosBlockchainModule::get_cryptarchia_info() const {
         fprintf(stderr, "Failed to free cryptarchia info: %s\n", operation_status::take_message(free_status).c_str());
     }
 
+    return result::ok(obj.dump());
+}
+
+StdLogosResult LogosBlockchainModule::pow_start_mining() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+    OperationStatus status = ::pow_start_mining(node);
+    return result::from_operation_status(status);
+}
+
+StdLogosResult LogosBlockchainModule::pow_stop_mining() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+    OperationStatus status = ::pow_stop_mining(node);
+    return result::from_operation_status(status);
+}
+
+StdLogosResult LogosBlockchainModule::pow_start_auto_claim() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+    OperationStatus status = ::pow_start_auto_claim(node);
+    return result::from_operation_status(status);
+}
+
+StdLogosResult LogosBlockchainModule::pow_stop_auto_claim() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+    OperationStatus status = ::pow_stop_auto_claim(node);
+    return result::from_operation_status(status);
+}
+
+StdLogosResult LogosBlockchainModule::pow_claim(const std::string& claim_address_hex) const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    std::vector<uint8_t> claim_address_bytes;
+    const uint8_t* claim_address = nullptr;
+    if (!claim_address_hex.empty()) {
+        claim_address_bytes = parse_address_hex(claim_address_hex);
+        if (claim_address_bytes.empty() || static_cast<int>(claim_address_bytes.size()) != ADDRESS_BYTES) {
+            return result::err("Invalid claim address (64 hex characters or empty).");
+        }
+        claim_address = claim_address_bytes.data();
+    }
+
+    auto [value, error] = ::pow_claim(node, claim_address);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+    return result::ok(bytes_to_hex(reinterpret_cast<const uint8_t*>(&value), TX_HASH_BYTES));
+}
+
+StdLogosResult LogosBlockchainModule::pow_claimable_rewards() const {
+    std::lock_guard<std::recursive_mutex> node_lock(nodeMutex);
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::pow_claimable_rewards(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    json obj;
+    obj["claimable_tickets"] = static_cast<std::int64_t>(value.claimable_tickets);
+    obj["slots_until_expiry"] = json::array();
+    for (size_t i = 0; i < value.len; ++i) {
+        obj["slots_until_expiry"].push_back(static_cast<std::int64_t>(value.slots_until_expiry[i]));
+    }
+
+    OperationStatus free_status = free_pow_claimable_rewards(value);
+    if (!is_ok(&free_status)) {
+        fprintf(
+            stderr,
+            "Failed to free PoW claimable rewards: %s\n",
+            operation_status::take_message(free_status).c_str()
+        );
+    }
     return result::ok(obj.dump());
 }

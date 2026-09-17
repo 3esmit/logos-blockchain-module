@@ -118,6 +118,8 @@ typedef struct {
     HeaderId tip;
     ClaimableVoucher* vouchers;
     size_t len;
+    uint64_t reward_amount;
+    uint64_t total_claimable;
 } ClaimableVouchers;
 
 // A single spendable wallet note (UTXO): its note ID and value.
@@ -132,6 +134,21 @@ typedef struct {
     WalletNote* notes;
     size_t len;
 } WalletNotes;
+
+// A wallet note old enough to take part in the leadership lottery.
+typedef struct {
+    NoteId id;
+    uint64_t value;
+    uint8_t public_key[32];
+} LeaderAgedNote;
+
+// The wallet's notes eligible to lead at a given tip.
+typedef struct {
+    HeaderId tip;
+    LeaderAgedNote* notes;
+    size_t len;
+    uint64_t total_value;
+} LeaderAgedNotes;
 
 // Cryptarchia consensus info
 typedef struct {
@@ -152,6 +169,7 @@ typedef struct { TxHash value; OperationStatus error; } FfiLeaderClaimResult;
 typedef struct { Hash value; OperationStatus error; } FfiChannelDepositResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
 typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResult;
+typedef struct { LeaderAgedNotes value; OperationStatus error; } FfiLeaderAgedNotesResult;
 typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableVouchersResult;
 typedef struct { uint8_t _0[32]; } DeclarationId;
 typedef struct { DeclarationId value; OperationStatus error; } BlendHashResult;
@@ -160,6 +178,15 @@ typedef StringResult FfiGetTimeInfoResult;
 typedef StringResult FfiGetFinalizedBlocksRangeResult;
 typedef StringResult FfiDiagnosticJsonResult;
 typedef struct { CryptarchiaInfo* value; OperationStatus error; } CryptarchiaInfoResult;
+typedef struct { uint64_t slot_duration_ms; int64_t genesis_time_unix_ms; uint64_t current_slot; uint32_t current_epoch; } TimeInfo;
+typedef struct { size_t n_peers; uint32_t n_connections; uint32_t n_pending_connections; size_t n_discovered_peers; } NetworkInfo;
+typedef struct { TimeInfo* value; OperationStatus error; } TimeInfoResult;
+typedef struct { Hash value; OperationStatus error; } SubmitTransactionResult;
+typedef struct { Hash value; OperationStatus error; } FfiPoWClaimResult;
+typedef struct { size_t claimable_tickets; uint64_t* slots_until_expiry; size_t len; } PoWClaimableRewards;
+typedef struct { PoWClaimableRewards value; OperationStatus error; } FfiPoWClaimableRewardsResult;
+typedef struct { char* value; OperationStatus error; } FfiGetChainIdResult;
+typedef struct { NetworkInfo value; OperationStatus error; } FfiNetworkInfoResult;
 
 // Block event callback
 typedef void (*BlockCallback)(const char* block_json);
@@ -176,6 +203,8 @@ OperationStatus generate_user_config_with_bootstrap_period(
 NodeResult start_lb_node(const char* config_path, const char* deployment);
 OperationStatus shutdown_node(LogosBlockchainNode* node);
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback);
+OperationStatus subscribe_to_processed_blocks(LogosBlockchainNode* node, BlockCallback callback);
+OperationStatus subscribe_to_lib_blocks(LogosBlockchainNode* node, BlockCallback callback);
 
 // Config management
 OperationStatus update_user_config(const char* user_config_path, const char* keystore_path);
@@ -221,6 +250,12 @@ FfiWalletNotesResult get_wallet_notes(
     const uint8_t* wallet_address,
     const HeaderId* optional_tip);
 OperationStatus free_wallet_notes(WalletNotes notes);
+FfiLeaderAgedNotesResult get_leader_aged_notes(
+    const LogosBlockchainNode* node,
+    const HeaderId* optional_tip);
+OperationStatus free_leader_aged_notes(LeaderAgedNotes notes);
+StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json);
+SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json);
 
 // Channel
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments);
@@ -229,12 +264,16 @@ FfiChannelDepositResult channel_deposit_with_notes(
     const ChannelDepositWithNotesArguments* arguments);
 FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip);
 OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers);
+StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id);
 
 // Blend
 BlendHashResult blend_join_as_core_node(
-    const LogosBlockchainNode* node,
+    LogosBlockchainNode* node,
     const char* locator,
     const uint8_t* locked_note_id);
+StringResult blend_info(LogosBlockchainNode* node);
+FfiGetChainIdResult get_chain_id(const LogosBlockchainNode* node);
+FfiNetworkInfoResult get_network_info_counters(const LogosBlockchainNode* node);
 
 // Explorer
 StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id);
@@ -258,6 +297,17 @@ FfiDiagnosticJsonResult get_mantle_metrics(const LogosBlockchainNode* node);
 uint32_t cryptarchia_info_abi_version(void);
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node);
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info);
+StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id);
+TimeInfoResult get_time_info_struct(const LogosBlockchainNode* node);
+OperationStatus free_time_info(TimeInfo* info);
+
+OperationStatus pow_start_mining(LogosBlockchainNode* node);
+OperationStatus pow_stop_mining(LogosBlockchainNode* node);
+OperationStatus pow_start_auto_claim(LogosBlockchainNode* node);
+OperationStatus pow_stop_auto_claim(LogosBlockchainNode* node);
+FfiPoWClaimResult pow_claim(LogosBlockchainNode* node, const uint8_t* claim_address);
+FfiPoWClaimableRewardsResult pow_claimable_rewards(LogosBlockchainNode* node);
+OperationStatus free_pow_claimable_rewards(PoWClaimableRewards rewards);
 
 // Memory management
 OperationStatus free_cstring(char* s);

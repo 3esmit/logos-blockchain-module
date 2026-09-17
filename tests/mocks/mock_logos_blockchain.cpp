@@ -24,6 +24,10 @@ uint64_t g_lastGeneratedBootstrapPeriod = 0;
 uint64_t g_lastFinalizedBlocksRangeFromSlot = 0;
 uint64_t g_lastFinalizedBlocksRangeToSlot = 0;
 uint64_t g_lastFinalizedBlocksRangeLimit = 0;
+std::string g_lastPowClaimAddress;
+BlockCallback g_lastNewBlockCallback = nullptr;
+BlockCallback g_lastProcessedBlockCallback = nullptr;
+BlockCallback g_lastLibBlockCallback = nullptr;
 
 static char s_fakeNode = 0;
 static CryptarchiaInfo s_fakeCryptarchiaInfo = {};
@@ -208,7 +212,20 @@ StringResult get_peer_id(const char* config_path) {
 OperationStatus subscribe_to_new_blocks(LogosBlockchainNode* node, BlockCallback callback) {
     LOGOS_CMOCK_RECORD("subscribe_to_new_blocks");
     s_blockCallback = callback;
+    g_lastNewBlockCallback = callback;
     return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_new_blocks"));
+}
+
+OperationStatus subscribe_to_processed_blocks(LogosBlockchainNode* node, BlockCallback callback) {
+    LOGOS_CMOCK_RECORD("subscribe_to_processed_blocks");
+    g_lastProcessedBlockCallback = callback;
+    return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_processed_blocks"));
+}
+
+OperationStatus subscribe_to_lib_blocks(LogosBlockchainNode* node, BlockCallback callback) {
+    LOGOS_CMOCK_RECORD("subscribe_to_lib_blocks");
+    g_lastLibBlockCallback = callback;
+    return make_status(LOGOS_CMOCK_RETURN(int, "subscribe_to_lib_blocks"));
 }
 
 BalanceResult get_balance(LogosBlockchainNode* node, const uint8_t* address, const void* reserved) {
@@ -276,10 +293,14 @@ FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, con
         }
         result.value.vouchers = s_mockClaimableVouchers;
         result.value.len = static_cast<size_t>(count);
+        result.value.reward_amount = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "claimable_vouchers_reward_amount"));
+        result.value.total_claimable = result.value.reward_amount * static_cast<uint64_t>(count);
     } else {
         memset(result.value.tip, 0, sizeof(HeaderId));
         result.value.vouchers = nullptr;
         result.value.len = 0;
+        result.value.reward_amount = 0;
+        result.value.total_claimable = 0;
     }
     return result;
 }
@@ -322,6 +343,66 @@ OperationStatus free_wallet_notes(WalletNotes notes) {
     return make_status(0);
 }
 
+// Leader-aged-notes mock storage (up to 4 notes)
+static LeaderAgedNote s_mockLeaderAgedNotes[4];
+
+FfiLeaderAgedNotesResult get_leader_aged_notes(
+    const LogosBlockchainNode* node,
+    const HeaderId* optional_tip)
+{
+    LOGOS_CMOCK_RECORD("get_leader_aged_notes");
+    FfiLeaderAgedNotesResult result;
+    memset(&result.value, 0, sizeof(LeaderAgedNotes));
+    int err = LOGOS_CMOCK_RETURN(int, "get_leader_aged_notes_error");
+    result.error = make_status(err);
+    if (err == 0) {
+        int count = LOGOS_CMOCK_RETURN(int, "get_leader_aged_notes_count");
+        if (count > 4) count = 4;
+        if (count < 0) count = 0;
+        for (int i = 0; i < count; ++i) {
+            memset(s_mockLeaderAgedNotes[i].id, 0x10 + i, sizeof(NoteId));
+            s_mockLeaderAgedNotes[i].value = static_cast<uint64_t>(100 * (i + 1));
+            memset(s_mockLeaderAgedNotes[i].public_key, 0xAA + 0x11 * i, 32);
+            result.value.total_value += s_mockLeaderAgedNotes[i].value;
+        }
+        memset(result.value.tip, 0xFF, sizeof(HeaderId));
+        result.value.notes = count > 0 ? s_mockLeaderAgedNotes : nullptr;
+        result.value.len = static_cast<size_t>(count);
+    }
+    return result;
+}
+
+OperationStatus free_leader_aged_notes(LeaderAgedNotes notes) {
+    LOGOS_CMOCK_RECORD("free_leader_aged_notes");
+    return make_status(0);
+}
+
+StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json) {
+    LOGOS_CMOCK_RECORD("wallet_fund_tx");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("wallet_fund_tx");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "wallet_fund_tx_error"));
+    return result;
+}
+
+SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json) {
+    LOGOS_CMOCK_RECORD("submit_signed_transaction");
+    SubmitTransactionResult result;
+    memset(result.value, 0xFA, sizeof(Hash));
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "submit_signed_transaction_error"));
+    return result;
+}
+
+StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id) {
+    LOGOS_CMOCK_RECORD("get_channel_state");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_channel_state");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_channel_state_error"));
+    return result;
+}
+
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments) {
     LOGOS_CMOCK_RECORD("channel_deposit");
     FfiChannelDepositResult result;
@@ -342,7 +423,7 @@ FfiChannelDepositResult channel_deposit_with_notes(
 }
 
 BlendHashResult blend_join_as_core_node(
-    const LogosBlockchainNode* node,
+    LogosBlockchainNode* node,
     const char* locator,
     const uint8_t* locked_note_id)
 {
@@ -350,6 +431,35 @@ BlendHashResult blend_join_as_core_node(
     BlendHashResult result;
     memset(&result.value, 0xCD, sizeof(result.value));
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_join_as_core_node_error"));
+    return result;
+}
+
+StringResult blend_info(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("blend_info");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("blend_info");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_info_error"));
+    return result;
+}
+
+FfiGetChainIdResult get_chain_id(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_chain_id");
+    FfiGetChainIdResult result;
+    const char* chain_id = LOGOS_CMOCK_RETURN_STRING("get_chain_id");
+    result.value = chain_id ? strdup(chain_id) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_chain_id_error"));
+    return result;
+}
+
+FfiNetworkInfoResult get_network_info_counters(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_network_info_counters");
+    FfiNetworkInfoResult result;
+    result.value.n_peers = static_cast<size_t>(LOGOS_CMOCK_RETURN(int, "network_n_peers"));
+    result.value.n_connections = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "network_n_connections"));
+    result.value.n_pending_connections = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "network_n_pending_connections"));
+    result.value.n_discovered_peers = static_cast<size_t>(LOGOS_CMOCK_RETURN(int, "network_n_discovered_peers"));
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_network_info_counters_error"));
     return result;
 }
 
@@ -425,6 +535,8 @@ FfiDiagnosticJsonResult get_cryptarchia_headers(
 }
 
 FfiDiagnosticJsonResult get_network_info(const LogosBlockchainNode* node) {
+    // Preserve the module's public diagnostic operation name in test traces;
+    // the C symbol itself is distinct from the typed counter API.
     LOGOS_CMOCK_RECORD("get_network_info");
     FfiDiagnosticJsonResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_network_info");
@@ -456,6 +568,93 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     result.value = &s_fakeCryptarchiaInfo;
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_cryptarchia_info_error"));
     return result;
+}
+
+StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id) {
+    LOGOS_CMOCK_RECORD("get_block_events");
+    StringResult result;
+    const char* json = LOGOS_CMOCK_RETURN_STRING("get_block_events");
+    result.value = json ? strdup(json) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_block_events_error"));
+    return result;
+}
+
+TimeInfoResult get_time_info_struct(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_time_info_struct");
+    static TimeInfo info = {};
+    info.slot_duration_ms = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "time_slot_duration_ms"));
+    info.genesis_time_unix_ms = static_cast<int64_t>(LOGOS_CMOCK_RETURN(int, "time_genesis_time_unix_ms"));
+    info.current_slot = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "time_current_slot"));
+    info.current_epoch = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "time_current_epoch"));
+    TimeInfoResult result{&info, make_status(LOGOS_CMOCK_RETURN(int, "get_time_info_struct_error"))};
+    return result;
+}
+
+OperationStatus free_time_info(TimeInfo* info) {
+    LOGOS_CMOCK_RECORD("free_time_info");
+    return make_status(0);
+}
+
+OperationStatus pow_start_mining(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("pow_start_mining");
+    return make_status(LOGOS_CMOCK_RETURN(int, "pow_start_mining_error"));
+}
+
+OperationStatus pow_stop_mining(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("pow_stop_mining");
+    return make_status(LOGOS_CMOCK_RETURN(int, "pow_stop_mining_error"));
+}
+
+OperationStatus pow_start_auto_claim(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("pow_start_auto_claim");
+    return make_status(LOGOS_CMOCK_RETURN(int, "pow_start_auto_claim_error"));
+}
+
+OperationStatus pow_stop_auto_claim(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("pow_stop_auto_claim");
+    return make_status(LOGOS_CMOCK_RETURN(int, "pow_stop_auto_claim_error"));
+}
+
+FfiPoWClaimResult pow_claim(LogosBlockchainNode* node, const uint8_t* claim_address) {
+    LOGOS_CMOCK_RECORD("pow_claim");
+    if (claim_address) {
+        g_lastPowClaimAddress.assign(claim_address, claim_address + sizeof(Hash));
+    } else {
+        g_lastPowClaimAddress = "<null>";
+    }
+    FfiPoWClaimResult result;
+    memset(result.value, 0xCD, sizeof(Hash));
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "pow_claim_error"));
+    return result;
+}
+
+static uint64_t s_mockSlotsUntilExpiry[4];
+
+FfiPoWClaimableRewardsResult pow_claimable_rewards(LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("pow_claimable_rewards");
+    FfiPoWClaimableRewardsResult result;
+    int err = LOGOS_CMOCK_RETURN(int, "pow_claimable_rewards_error");
+    result.error = make_status(err);
+    if (err == 0) {
+        int count = LOGOS_CMOCK_RETURN(int, "pow_claimable_rewards_count");
+        if (count > 4) count = 4;
+        if (count < 0) count = 0;
+        for (int i = 0; i < count; ++i)
+            s_mockSlotsUntilExpiry[i] = static_cast<uint64_t>(100 + i);
+        result.value.claimable_tickets = static_cast<size_t>(count);
+        result.value.slots_until_expiry = s_mockSlotsUntilExpiry;
+        result.value.len = static_cast<size_t>(count);
+    } else {
+        result.value.claimable_tickets = 0;
+        result.value.slots_until_expiry = nullptr;
+        result.value.len = 0;
+    }
+    return result;
+}
+
+OperationStatus free_pow_claimable_rewards(PoWClaimableRewards rewards) {
+    LOGOS_CMOCK_RECORD("free_pow_claimable_rewards");
+    return make_status(0);
 }
 
 uint32_t cryptarchia_info_abi_version(void) {

@@ -17,6 +17,8 @@
 #include <vector>
 
 std::string g_lastNewBlockJson;
+std::string g_lastProcessedBlockEventJson;
+std::string g_lastLibBlockEventJson;
 using NewBlockHook = void (*)();
 static NewBlockHook g_newBlockHook = nullptr;
 
@@ -50,4 +52,14 @@ void LogosBlockchainModule::newBlock(const std::string& blockJson) {
         g_newBlockHook();
     }
     emitEventImpl_("newBlock", nullptr);
+}
+
+void LogosBlockchainModule::processedBlock(const std::string& eventJson) {
+    g_lastProcessedBlockEventJson = eventJson;
+    emitEventImpl_("processedBlock", nullptr);
+}
+
+void LogosBlockchainModule::libBlock(const std::string& blockInfoJson) {
+    g_lastLibBlockEventJson = blockInfoJson;
+    emitEventImpl_("libBlock", nullptr);
 }

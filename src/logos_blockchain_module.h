@@ -47,6 +47,10 @@ public:
     /// compatible and independent.
     [[nodiscard]] std::string nodeAction(const std::string& request);
 
+    // State management
+    [[nodiscard]] StdLogosResult does_state_exist() const;
+    [[nodiscard]] StdLogosResult purge_state() const;
+
     // Config management
     // Not static: when the JSON args set "use_persistence_paths": true it routes
     // the node's output/state/storage/logs paths under instancePersistencePath()
@@ -119,8 +123,11 @@ public:
         const std::string& wallet_address_hex,
         const std::string& optional_tip_hex
     ) const;
+    [[nodiscard]] StdLogosResult wallet_get_leader_aged_notes(const std::string& optional_tip_hex) const;
     [[nodiscard]] StdLogosResult leader_claim() const;
     [[nodiscard]] StdLogosResult wallet_get_claimable_vouchers() const;
+    [[nodiscard]] StdLogosResult wallet_fund_tx(const std::string& request_json) const;
+    [[nodiscard]] StdLogosResult submit_signed_transaction(const std::string& signed_tx_json) const;
 
     // Channel
     // Amount-based deposit: the binding selects funding notes itself (splitting a
@@ -149,6 +156,7 @@ public:
         const std::string& max_tx_fee,
         const std::string& optional_tip_hex
     ) const;
+    [[nodiscard]] StdLogosResult get_channel_state(const std::string& channel_id_hex) const;
 
     // Blend
     [[nodiscard]] StdLogosResult blend_join_as_core_node(
@@ -157,6 +165,8 @@ public:
         const std::string& locked_note_id_hex,
         const std::vector<std::string>& locators
     ) const;
+    [[nodiscard]] StdLogosResult blend_info() const;
+    [[nodiscard]] StdLogosResult get_chain_id() const;
 
     // Explorer. Direct reads normalize known request identities into the
     // response: block.header.id and transaction.mantle_tx.hash when mantle_tx
@@ -166,6 +176,7 @@ public:
     [[nodiscard]] StdLogosResult get_block(const std::string& header_id_hex) const;
     [[nodiscard]] StdLogosResult get_blocks(uint64_t from_slot, uint64_t to_slot) const;
     [[nodiscard]] StdLogosResult get_transaction(const std::string& tx_hash_hex) const;
+    [[nodiscard]] StdLogosResult get_block_events(const std::string& header_id_hex) const;
 
     // Catalog. These are direct projections of the matching logos-blockchain
     // C API calls so every module host can read the snapshot-safe catalog data.
@@ -183,6 +194,13 @@ public:
     [[nodiscard]] StdLogosResult get_network_info() const;
     [[nodiscard]] StdLogosResult get_mantle_metrics() const;
 
+    [[nodiscard]] StdLogosResult pow_start_mining() const;
+    [[nodiscard]] StdLogosResult pow_stop_mining() const;
+    [[nodiscard]] StdLogosResult pow_start_auto_claim() const;
+    [[nodiscard]] StdLogosResult pow_stop_auto_claim() const;
+    [[nodiscard]] StdLogosResult pow_claim(const std::string& claim_address_hex) const;
+    [[nodiscard]] StdLogosResult pow_claimable_rewards() const;
+
     // clang-format off
 // Clang-format only handles public/private/protected, so it miss-indents this section.
 // Guard kept until https://github.com/llvm/llvm-project/issues/64763 lands.
@@ -197,6 +215,8 @@ logos_events:
     // copied into mantle_tx.hash when absent.
     // ReSharper disable once CppFunctionIsNotImplemented
     void newBlock(const std::string& blockJson);
+    void processedBlock(const std::string& eventJson);
+    void libBlock(const std::string& blockInfoJson);
     // clang-format on
 
 protected:
@@ -349,4 +369,6 @@ private:
 
     // C-compatible callback function
     static void on_new_block_callback(const char* block);
+    static void on_processed_block_callback(const char* event);
+    static void on_lib_block_callback(const char* event);
 };
