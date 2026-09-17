@@ -28,6 +28,7 @@ what_you_learn:
   - Which services the node brings up, and what "ready" looks like for each
   - How to read chain state with `get_cryptarchia_info`
   - How the wallet exposes its known addresses and their balances
+  - How to check for and purge the node's state between runs
   - Why skipping IBD is the right choice for a reproducible test, and what it leaves untested
 
 prerequisites:
@@ -284,6 +285,44 @@ sections:
           logoscore call blockchain_module get_cryptarchia_info
         expect_contains:
           - "The node is not running."
+
+  - title: "Purge the node's state"
+    step: true
+    text: |
+      Running the node left a state directory behind, under the module's per-instance directory, defined by
+      `use_persistence_paths`.
+      An operator who wants to resync from scratch needs it gone, and the UI offers to do that when it is there.
+
+      `does_state_exist` is what the UI checks before offering the purge; `purge_state` does the removing.
+      The purge refuses while the node is running, which is why this comes after the stop.
+    steps:
+      - title: "Check for existing state"
+        run: "./logos/bin/logoscore call blockchain_module does_state_exist"
+        code_block: |
+          logoscore call blockchain_module does_state_exist
+        expect_contains:
+          - '"success":true'
+          - 'value":true'
+
+      - title: "Purge it"
+        text: |
+          Only `state` goes.
+          The generated config and the keystore stay, so the node keeps the identity it generated and simply resyncs on
+          the next start.
+        run: "./logos/bin/logoscore call blockchain_module purge_state"
+        code_block: |
+          logoscore call blockchain_module purge_state
+        expect_contains:
+          - '"success":true'
+
+      - title: "Confirm it is gone"
+        run: "./logos/bin/logoscore call blockchain_module does_state_exist"
+        code_block: |
+          logoscore call blockchain_module does_state_exist
+        expect_contains:
+          - 'value":false'
+        post_text: |
+          The next start recreates the directory and syncs into it from genesis.
 
       - title: "Stop the daemon"
         run: "./logos/bin/logoscore stop"

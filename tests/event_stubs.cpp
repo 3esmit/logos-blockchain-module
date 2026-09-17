@@ -17,8 +17,13 @@
 #include <vector>
 
 std::string g_lastNewBlockJson;
+std::string g_lastProcessedBlockEventJson;
+std::string g_lastLibBlockEventJson;
 using NewBlockHook = void (*)();
 static NewBlockHook g_newBlockHook = nullptr;
+using EventHook = void (*)();
+static EventHook g_processedBlockHook = nullptr;
+static EventHook g_libBlockHook = nullptr;
 
 namespace {
     std::mutex nodeChangedEventsMutex;
@@ -39,6 +44,14 @@ void set_new_block_hook(NewBlockHook hook) {
     g_newBlockHook = hook;
 }
 
+void set_processed_block_hook(EventHook hook) {
+    g_processedBlockHook = hook;
+}
+
+void set_lib_block_hook(EventHook hook) {
+    g_libBlockHook = hook;
+}
+
 void LogosBlockchainModule::nodeChanged(const std::string& event) {
     std::lock_guard<std::mutex> lock(nodeChangedEventsMutex);
     nodeChangedEvents.push_back(event);
@@ -50,4 +63,20 @@ void LogosBlockchainModule::newBlock(const std::string& blockJson) {
         g_newBlockHook();
     }
     emitEventImpl_("newBlock", nullptr);
+}
+
+void LogosBlockchainModule::processedBlock(const std::string& eventJson) {
+    g_lastProcessedBlockEventJson = eventJson;
+    if (g_processedBlockHook) {
+        g_processedBlockHook();
+    }
+    emitEventImpl_("processedBlock", nullptr);
+}
+
+void LogosBlockchainModule::libBlock(const std::string& blockInfoJson) {
+    g_lastLibBlockEventJson = blockInfoJson;
+    if (g_libBlockHook) {
+        g_libBlockHook();
+    }
+    emitEventImpl_("libBlock", nullptr);
 }
