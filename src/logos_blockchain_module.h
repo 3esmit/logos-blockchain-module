@@ -113,7 +113,22 @@ public:
         const std::string& wallet_address_hex,
         const std::string& optional_tip_hex
     ) const;
+    // Wallet notes old enough to take part in the leadership lottery, i.e.
+    // whether this node can currently win a slot, as a JSON string:
+    //   { "tip": "<hex>", "total_value": "<u64>",
+    //     "notes": [ { "id": "<hex>", "value": "<u64>", "public_key": "<hex>" }, ... ] }
+    // An empty notes array means the node cannot lead at that tip. The faucet
+    // note is not filtered out. optional_tip_hex may be empty to query at the
+    // current tip.
+    [[nodiscard]] StdLogosResult wallet_get_leader_aged_notes(const std::string& optional_tip_hex) const;
     [[nodiscard]] StdLogosResult leader_claim() const;
+    // Leader vouchers this wallet can claim, as a JSON string:
+    //   { "tip": "<hex>", "reward_amount": "<u64>", "total_claimable": "<u64>",
+    //     "vouchers": [ { "commitment": "<hex>", "nullifier": "<hex>" }, ... ] }
+    // reward_amount is what a single voucher pays out at tip (the pool is split
+    // evenly across all unclaimed vouchers, so it moves as other leaders
+    // claim); total_claimable is reward_amount times the number of vouchers.
+    // Both are snapshots at tip, not a guarantee of what a claim settles for.
     [[nodiscard]] StdLogosResult wallet_get_claimable_vouchers() const;
     // Funds an unsigned transaction: request_json is passed through to the
     // node's wallet fund endpoint (same JSON schema as the HTTP `/wallet/fund`
@@ -165,6 +180,18 @@ public:
         const std::string& locked_note_id_hex
     ) const;
     [[nodiscard]] StdLogosResult blend_info() const;
+
+    // Chain
+    // Chain ID of the deployment the running node was started with. Fixed for
+    // the node's lifetime.
+    [[nodiscard]] StdLogosResult get_chain_id() const;
+
+    // Network
+    // libp2p connectivity counters of the running node, as JSON:
+    //   { n_peers, n_connections, n_pending_connections, n_discovered_peers }
+    // The peer and address lists behind these counts are available over HTTP
+    // at `/network/info`.
+    [[nodiscard]] StdLogosResult get_network_info() const;
 
     // Explorer
     [[nodiscard]] StdLogosResult get_block(const std::string& header_id_hex) const;

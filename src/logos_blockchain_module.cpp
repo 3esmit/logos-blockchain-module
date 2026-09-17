@@ -822,6 +822,48 @@ StdLogosResult LogosBlockchainModule::wallet_get_notes(
     return result::ok(obj.dump());
 }
 
+StdLogosResult LogosBlockchainModule::wallet_get_leader_aged_notes(const std::string& optional_tip_hex) const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    std::vector<uint8_t> tip_bytes;
+    const HeaderId* optional_tip = nullptr;
+    if (!optional_tip_hex.empty()) {
+        tip_bytes = parse_address_hex(optional_tip_hex);
+        if (tip_bytes.empty() || static_cast<int>(tip_bytes.size()) != ADDRESS_BYTES) {
+            return result::err("Invalid optional tip (64 hex characters or empty).");
+        }
+        optional_tip = reinterpret_cast<const HeaderId*>(tip_bytes.data());
+    }
+
+    auto [value, error] = get_leader_aged_notes(node, optional_tip);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    json obj;
+    obj["tip"] = bytes_to_hex(value.tip, TX_HASH_BYTES);
+    json notes = json::array();
+    for (size_t i = 0; i < value.len; ++i) {
+        const auto& [note_id, note_value, public_key] = value.notes[i];
+        json n;
+        n["id"] = bytes_to_hex(note_id, TX_HASH_BYTES);
+        // Value is u64; serialized as a string to avoid JSON number precision loss.
+        n["value"] = std::to_string(note_value);
+        n["public_key"] = bytes_to_hex(public_key, ADDRESS_BYTES);
+        notes.push_back(std::move(n));
+    }
+    obj["notes"] = std::move(notes);
+    obj["total_value"] = std::to_string(value.total_value);
+
+    OperationStatus free_status = free_leader_aged_notes(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free leader aged notes: %s\n", operation_status::take_message(free_status).c_str());
+    }
+    return result::ok(obj.dump());
+}
+
 StdLogosResult LogosBlockchainModule::leader_claim() const {
     if (!node) {
         return result::err("The node is not running.");
@@ -1042,6 +1084,10 @@ StdLogosResult LogosBlockchainModule::wallet_get_claimable_vouchers() const {
         });
     }
 
+    // Value is u64; serialized as a string to avoid JSON number precision loss.
+    obj["reward_amount"] = std::to_string(value.reward_amount);
+    obj["total_claimable"] = std::to_string(value.total_claimable);
+
     OperationStatus free_status = free_claimable_vouchers(value);
     if (!is_ok(&free_status)) {
         fprintf(stderr, "Failed to free claimable vouchers: %s\n", operation_status::take_message(free_status).c_str());
@@ -1127,6 +1173,46 @@ StdLogosResult LogosBlockchainModule::blend_info() const {
         fprintf(stderr, "Failed to free blend info string: %s\n", operation_status::take_message(free_status).c_str());
     }
     return result::ok(std::move(out));
+}
+
+// Chain
+
+StdLogosResult LogosBlockchainModule::get_chain_id() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_chain_id(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    std::string out(value);
+    OperationStatus free_status = free_cstring(value);
+    if (!is_ok(&free_status)) {
+        fprintf(stderr, "Failed to free chain ID string: %s\n", operation_status::take_message(free_status).c_str());
+    }
+    return result::ok(std::move(out));
+}
+
+// Network
+
+StdLogosResult LogosBlockchainModule::get_network_info() const {
+    if (!node) {
+        return result::err("The node is not running.");
+    }
+
+    auto [value, error] = ::get_network_info(node);
+    if (!is_ok(&error)) {
+        return result::err(operation_status::take_message(error));
+    }
+
+    json obj;
+    obj["n_peers"] = static_cast<int64_t>(value.n_peers);
+    obj["n_connections"] = value.n_connections;
+    obj["n_pending_connections"] = value.n_pending_connections;
+    obj["n_discovered_peers"] = static_cast<int64_t>(value.n_discovered_peers);
+    return result::ok(obj.dump());
 }
 
 // Explorer

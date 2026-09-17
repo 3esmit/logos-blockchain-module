@@ -433,6 +433,14 @@ LOGOS_TEST(wallet_get_notes_without_node_returns_error) {
     LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
 }
 
+LOGOS_TEST(wallet_get_leader_aged_notes_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.wallet_get_leader_aged_notes("");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
 LOGOS_TEST(wallet_get_known_addresses_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
@@ -451,6 +459,22 @@ LOGOS_TEST(blend_info_without_node_returns_error) {
     auto t = LogosTestContext("blockchain_module");
     LogosBlockchainModule module;
     StdLogosResult result = module.blend_info();
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
+LOGOS_TEST(get_chain_id_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.get_chain_id();
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
+}
+
+LOGOS_TEST(get_network_info_without_node_returns_error) {
+    auto t = LogosTestContext("blockchain_module");
+    LogosBlockchainModule module;
+    StdLogosResult result = module.get_network_info();
     LOGOS_ASSERT_FALSE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.error, "not running"));
 }
@@ -1125,6 +1149,73 @@ LOGOS_TEST(wallet_get_notes_rejects_invalid_address) {
     delete module;
 }
 
+LOGOS_TEST(wallet_get_leader_aged_notes_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_leader_aged_notes_error").returns(0);
+    t.mockCFunction("get_leader_aged_notes_count").returns(2);
+
+    StdLogosResult result = module->wallet_get_leader_aged_notes("");
+    LOGOS_ASSERT_TRUE(result.success);
+    std::string json = result.value.get<std::string>();
+    LOGOS_ASSERT_TRUE(contains(json, "\"tip\":\"" + std::string(64, 'f') + "\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"value\":\"100\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"value\":\"200\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"public_key\":\"" + std::string(64, 'a') + "\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"public_key\":\"" + std::string(64, 'b') + "\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"total_value\":\"300\""));
+    LOGOS_ASSERT(t.cFunctionCalled("get_leader_aged_notes"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_leader_aged_notes"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_leader_aged_notes_returns_empty_notes_array) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_leader_aged_notes_error").returns(0);
+    t.mockCFunction("get_leader_aged_notes_count").returns(0);
+
+    StdLogosResult result = module->wallet_get_leader_aged_notes("");
+    LOGOS_ASSERT_TRUE(result.success);
+    std::string json = result.value.get<std::string>();
+    LOGOS_ASSERT_TRUE(contains(json, "\"notes\":[]"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"total_value\":\"0\""));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_leader_aged_notes_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_leader_aged_notes_error").returns(1);
+
+    StdLogosResult result = module->wallet_get_leader_aged_notes("");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_leader_aged_notes_rejects_invalid_optional_tip) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    StdLogosResult result = module->wallet_get_leader_aged_notes("bad");
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "optional tip"));
+    LOGOS_ASSERT_FALSE(t.cFunctionCalled("get_leader_aged_notes"));
+    delete module;
+}
+
 LOGOS_TEST(channel_deposit_with_notes_returns_tx_hash) {
     auto t = LogosTestContext("blockchain_module");
     TempDir tmpDir;
@@ -1289,6 +1380,24 @@ LOGOS_TEST(wallet_get_claimable_vouchers_returns_json) {
     LOGOS_ASSERT_TRUE(contains(json, "20202020"));
     LOGOS_ASSERT(t.cFunctionCalled("get_claimable_vouchers"));
     LOGOS_ASSERT(t.cFunctionCalled("free_claimable_vouchers"));
+    delete module;
+}
+
+LOGOS_TEST(wallet_get_claimable_vouchers_reports_rewards) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_claimable_vouchers_error").returns(0);
+    t.mockCFunction("get_claimable_vouchers_count").returns(3);
+    t.mockCFunction("claimable_vouchers_reward_amount").returns(250);
+
+    StdLogosResult result = module->wallet_get_claimable_vouchers();
+    LOGOS_ASSERT_TRUE(result.success);
+    std::string json = result.value.get<std::string>();
+    LOGOS_ASSERT_TRUE(contains(json, "\"reward_amount\":\"250\""));
+    LOGOS_ASSERT_TRUE(contains(json, "\"total_claimable\":\"750\""));
     delete module;
 }
 
@@ -1479,6 +1588,78 @@ LOGOS_TEST(blend_info_returns_error_on_ffi_failure) {
     t.mockCFunction("blend_info_error").returns(1);
 
     StdLogosResult result = module->blend_info();
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
+// Chain
+
+LOGOS_TEST(get_chain_id_returns_chain_id_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_chain_id").returns("logos-devnet");
+    t.mockCFunction("get_chain_id_error").returns(0);
+
+    StdLogosResult result = module->get_chain_id();
+    LOGOS_ASSERT_TRUE(result.success);
+    LOGOS_ASSERT_EQ(result.value.get<std::string>(), std::string("logos-devnet"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_chain_id"));
+    LOGOS_ASSERT(t.cFunctionCalled("free_cstring"));
+    delete module;
+}
+
+LOGOS_TEST(get_chain_id_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_chain_id_error").returns(1);
+
+    StdLogosResult result = module->get_chain_id();
+    LOGOS_ASSERT_FALSE(result.success);
+    LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
+    delete module;
+}
+
+// Network
+
+LOGOS_TEST(get_network_info_returns_json_on_success) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_network_info_error").returns(0);
+    t.mockCFunction("network_n_peers").returns(3);
+    t.mockCFunction("network_n_connections").returns(4);
+    t.mockCFunction("network_n_pending_connections").returns(1);
+    t.mockCFunction("network_n_discovered_peers").returns(9);
+
+    StdLogosResult result = module->get_network_info();
+    LOGOS_ASSERT_TRUE(result.success);
+    std::string json = result.value.get<std::string>();
+    LOGOS_ASSERT_TRUE(contains(json, "\"n_peers\":3"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"n_connections\":4"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"n_pending_connections\":1"));
+    LOGOS_ASSERT_TRUE(contains(json, "\"n_discovered_peers\":9"));
+    LOGOS_ASSERT(t.cFunctionCalled("get_network_info"));
+    delete module;
+}
+
+LOGOS_TEST(get_network_info_returns_error_on_ffi_failure) {
+    auto t = LogosTestContext("blockchain_module");
+    TempDir tmpDir;
+    auto* module = createStartedModule(t, tmpDir);
+    LOGOS_ASSERT_TRUE(module != nullptr);
+
+    t.mockCFunction("get_network_info_error").returns(1);
+
+    StdLogosResult result = module->get_network_info();
     LOGOS_ASSERT_FALSE(result.success);
     LOGOS_ASSERT_TRUE(contains(result.error, "mock error"));
     delete module;

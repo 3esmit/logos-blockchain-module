@@ -116,6 +116,8 @@ typedef struct {
     HeaderId tip;
     ClaimableVoucher* vouchers;
     size_t len;
+    uint64_t reward_amount;
+    uint64_t total_claimable;
 } ClaimableVouchers;
 
 // A single spendable wallet note (UTXO): its note ID and value.
@@ -130,6 +132,21 @@ typedef struct {
     WalletNote* notes;
     size_t len;
 } WalletNotes;
+
+// A wallet note old enough to take part in the leadership lottery.
+typedef struct {
+    NoteId id;
+    uint64_t value;
+    uint8_t public_key[32];
+} LeaderAgedNote;
+
+// The wallet's notes eligible to lead at a given tip.
+typedef struct {
+    HeaderId tip;
+    LeaderAgedNote* notes;
+    size_t len;
+    uint64_t total_value;
+} LeaderAgedNotes;
 
 // Cryptarchia consensus info
 typedef struct {
@@ -155,6 +172,14 @@ typedef struct {
     uint32_t current_epoch;
 } TimeInfo;
 
+// libp2p connectivity counters (plain values, no free call needed)
+typedef struct {
+    size_t n_peers;
+    uint32_t n_connections;
+    uint32_t n_pending_connections;
+    size_t n_discovered_peers;
+} NetworkInfo;
+
 // Result types (C++ structured bindings decompose these)
 typedef struct { LogosBlockchainNode* value; OperationStatus error; } NodeResult;
 typedef struct { uint64_t value; OperationStatus error; } BalanceResult;
@@ -163,6 +188,7 @@ typedef struct { TxHash value; OperationStatus error; } FfiLeaderClaimResult;
 typedef struct { Hash value; OperationStatus error; } FfiChannelDepositResult;
 typedef struct { KnownAddresses value; OperationStatus error; } KnownAddressesResult;
 typedef struct { WalletNotes value; OperationStatus error; } FfiWalletNotesResult;
+typedef struct { LeaderAgedNotes value; OperationStatus error; } FfiLeaderAgedNotesResult;
 typedef struct { ClaimableVouchers value; OperationStatus error; } FfiClaimableVouchersResult;
 typedef struct { Hash value; OperationStatus error; } BlendHashResult;
 typedef struct { char* value; OperationStatus error; } StringResult;
@@ -171,6 +197,8 @@ typedef struct { TimeInfo* value; OperationStatus error; } TimeInfoResult;
 typedef struct { Hash value; OperationStatus error; } SubmitTransactionResult;
 typedef struct { Hash value; OperationStatus error; } FfiPoWClaimResult;
 typedef struct { PoWClaimableRewards value; OperationStatus error; } FfiPoWClaimableRewardsResult;
+typedef struct { char* value; OperationStatus error; } FfiGetChainIdResult;
+typedef struct { NetworkInfo value; OperationStatus error; } FfiNetworkInfoResult;
 
 // Block event callback
 typedef void (*BlockCallback)(const char* block_json);
@@ -232,6 +260,10 @@ FfiWalletNotesResult get_wallet_notes(
     const uint8_t* wallet_address,
     const HeaderId* optional_tip);
 OperationStatus free_wallet_notes(WalletNotes notes);
+FfiLeaderAgedNotesResult get_leader_aged_notes(
+    const LogosBlockchainNode* node,
+    const HeaderId* optional_tip);
+OperationStatus free_leader_aged_notes(LeaderAgedNotes notes);
 StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json);
 
 // Transactions
@@ -252,6 +284,12 @@ BlendHashResult blend_join_as_core_node(
     const char* locator,
     const uint8_t* locked_note_id);
 StringResult blend_info(LogosBlockchainNode* node);
+
+// Chain
+FfiGetChainIdResult get_chain_id(const LogosBlockchainNode* node);
+
+// Network
+FfiNetworkInfoResult get_network_info(const LogosBlockchainNode* node);
 
 // Explorer
 StringResult get_block(LogosBlockchainNode* node, const HeaderId* header_id);

@@ -229,10 +229,14 @@ FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, con
         }
         result.value.vouchers = s_mockClaimableVouchers;
         result.value.len = static_cast<size_t>(count);
+        result.value.reward_amount = static_cast<uint64_t>(LOGOS_CMOCK_RETURN(int, "claimable_vouchers_reward_amount"));
+        result.value.total_claimable = result.value.reward_amount * static_cast<uint64_t>(count);
     } else {
         memset(result.value.tip, 0, sizeof(HeaderId));
         result.value.vouchers = nullptr;
         result.value.len = 0;
+        result.value.reward_amount = 0;
+        result.value.total_claimable = 0;
     }
     return result;
 }
@@ -281,6 +285,40 @@ FfiWalletNotesResult get_wallet_notes(
 
 OperationStatus free_wallet_notes(WalletNotes notes) {
     LOGOS_CMOCK_RECORD("free_wallet_notes");
+    return make_status(0);
+}
+
+// Leader-aged-notes mock storage (up to 4 notes)
+static LeaderAgedNote s_mockLeaderAgedNotes[4];
+
+FfiLeaderAgedNotesResult get_leader_aged_notes(
+    const LogosBlockchainNode* node,
+    const HeaderId* optional_tip)
+{
+    LOGOS_CMOCK_RECORD("get_leader_aged_notes");
+    FfiLeaderAgedNotesResult result;
+    memset(&result.value, 0, sizeof(LeaderAgedNotes));
+    int err = LOGOS_CMOCK_RETURN(int, "get_leader_aged_notes_error");
+    result.error = make_status(err);
+    if (err == 0) {
+        int count = LOGOS_CMOCK_RETURN(int, "get_leader_aged_notes_count");
+        if (count > 4) count = 4;
+        if (count < 0) count = 0;
+        for (int i = 0; i < count; ++i) {
+            memset(s_mockLeaderAgedNotes[i].id, 0x10 + i, sizeof(NoteId));
+            s_mockLeaderAgedNotes[i].value = static_cast<uint64_t>(100 * (i + 1));
+            memset(s_mockLeaderAgedNotes[i].public_key, 0xAA + 0x11 * i, 32);
+            result.value.total_value += s_mockLeaderAgedNotes[i].value;
+        }
+        memset(result.value.tip, 0xFF, sizeof(HeaderId));
+        result.value.notes = count > 0 ? s_mockLeaderAgedNotes : nullptr;
+        result.value.len = static_cast<size_t>(count);
+    }
+    return result;
+}
+
+OperationStatus free_leader_aged_notes(LeaderAgedNotes notes) {
+    LOGOS_CMOCK_RECORD("free_leader_aged_notes");
     return make_status(0);
 }
 
@@ -338,6 +376,26 @@ StringResult blend_info(LogosBlockchainNode* node) {
     const char* json = LOGOS_CMOCK_RETURN_STRING("blend_info");
     result.value = json ? strdup(json) : nullptr;
     result.error = make_status(LOGOS_CMOCK_RETURN(int, "blend_info_error"));
+    return result;
+}
+
+FfiGetChainIdResult get_chain_id(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_chain_id");
+    FfiGetChainIdResult result;
+    const char* chain_id = LOGOS_CMOCK_RETURN_STRING("get_chain_id");
+    result.value = chain_id ? strdup(chain_id) : nullptr;
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_chain_id_error"));
+    return result;
+}
+
+FfiNetworkInfoResult get_network_info(const LogosBlockchainNode* node) {
+    LOGOS_CMOCK_RECORD("get_network_info");
+    FfiNetworkInfoResult result;
+    result.value.n_peers = static_cast<size_t>(LOGOS_CMOCK_RETURN(int, "network_n_peers"));
+    result.value.n_connections = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "network_n_connections"));
+    result.value.n_pending_connections = static_cast<uint32_t>(LOGOS_CMOCK_RETURN(int, "network_n_pending_connections"));
+    result.value.n_discovered_peers = static_cast<size_t>(LOGOS_CMOCK_RETURN(int, "network_n_discovered_peers"));
+    result.error = make_status(LOGOS_CMOCK_RETURN(int, "get_network_info_error"));
     return result;
 }
 
