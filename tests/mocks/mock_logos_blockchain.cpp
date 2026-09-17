@@ -70,6 +70,22 @@ void trigger_mock_new_block(const char* block_json) {
     }
 }
 
+void trigger_mock_processed_block(const char* event_json) {
+    if (g_lastProcessedBlockCallback) {
+        s_blockCallbackActive.store(true);
+        g_lastProcessedBlockCallback(event_json);
+        s_blockCallbackActive.store(false);
+    }
+}
+
+void trigger_mock_lib_block(const char* event_json) {
+    if (g_lastLibBlockCallback) {
+        s_blockCallbackActive.store(true);
+        g_lastLibBlockCallback(event_json);
+        s_blockCallbackActive.store(false);
+    }
+}
+
 bool mock_shutdown_during_block_callback() {
     return s_shutdownDuringBlockCallback.load();
 }
@@ -377,7 +393,7 @@ OperationStatus free_leader_aged_notes(LeaderAgedNotes notes) {
     return make_status(0);
 }
 
-StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json) {
+StringResult wallet_fund_tx(const LogosBlockchainNode* node, const char* request_json) {
     LOGOS_CMOCK_RECORD("wallet_fund_tx");
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("wallet_fund_tx");
@@ -386,7 +402,7 @@ StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json)
     return result;
 }
 
-SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json) {
+SubmitTransactionResult submit_signed_transaction(const LogosBlockchainNode* node, const char* signed_tx_json) {
     LOGOS_CMOCK_RECORD("submit_signed_transaction");
     SubmitTransactionResult result;
     memset(result.value, 0xFA, sizeof(Hash));
@@ -394,7 +410,7 @@ SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, con
     return result;
 }
 
-StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id) {
+StringResult get_channel_state(const LogosBlockchainNode* node, const uint8_t* channel_id) {
     LOGOS_CMOCK_RECORD("get_channel_state");
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_channel_state");
@@ -423,7 +439,7 @@ FfiChannelDepositResult channel_deposit_with_notes(
 }
 
 BlendHashResult blend_join_as_core_node(
-    LogosBlockchainNode* node,
+    const LogosBlockchainNode* node,
     const char* locator,
     const uint8_t* locked_note_id)
 {
@@ -434,7 +450,7 @@ BlendHashResult blend_join_as_core_node(
     return result;
 }
 
-StringResult blend_info(LogosBlockchainNode* node) {
+StringResult blend_info(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("blend_info");
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("blend_info");
@@ -570,7 +586,7 @@ CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node) {
     return result;
 }
 
-StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id) {
+StringResult get_block_events(const LogosBlockchainNode* node, const HeaderId* header_id) {
     LOGOS_CMOCK_RECORD("get_block_events");
     StringResult result;
     const char* json = LOGOS_CMOCK_RETURN_STRING("get_block_events");
@@ -595,27 +611,27 @@ OperationStatus free_time_info(TimeInfo* info) {
     return make_status(0);
 }
 
-OperationStatus pow_start_mining(LogosBlockchainNode* node) {
+OperationStatus pow_start_mining(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("pow_start_mining");
     return make_status(LOGOS_CMOCK_RETURN(int, "pow_start_mining_error"));
 }
 
-OperationStatus pow_stop_mining(LogosBlockchainNode* node) {
+OperationStatus pow_stop_mining(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("pow_stop_mining");
     return make_status(LOGOS_CMOCK_RETURN(int, "pow_stop_mining_error"));
 }
 
-OperationStatus pow_start_auto_claim(LogosBlockchainNode* node) {
+OperationStatus pow_start_auto_claim(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("pow_start_auto_claim");
     return make_status(LOGOS_CMOCK_RETURN(int, "pow_start_auto_claim_error"));
 }
 
-OperationStatus pow_stop_auto_claim(LogosBlockchainNode* node) {
+OperationStatus pow_stop_auto_claim(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("pow_stop_auto_claim");
     return make_status(LOGOS_CMOCK_RETURN(int, "pow_stop_auto_claim_error"));
 }
 
-FfiPoWClaimResult pow_claim(LogosBlockchainNode* node, const uint8_t* claim_address) {
+FfiPoWClaimResult pow_claim(const LogosBlockchainNode* node, const uint8_t* claim_address) {
     LOGOS_CMOCK_RECORD("pow_claim");
     if (claim_address) {
         g_lastPowClaimAddress.assign(claim_address, claim_address + sizeof(Hash));
@@ -630,7 +646,7 @@ FfiPoWClaimResult pow_claim(LogosBlockchainNode* node, const uint8_t* claim_addr
 
 static uint64_t s_mockSlotsUntilExpiry[4];
 
-FfiPoWClaimableRewardsResult pow_claimable_rewards(LogosBlockchainNode* node) {
+FfiPoWClaimableRewardsResult pow_claimable_rewards(const LogosBlockchainNode* node) {
     LOGOS_CMOCK_RECORD("pow_claimable_rewards");
     FfiPoWClaimableRewardsResult result;
     int err = LOGOS_CMOCK_RETURN(int, "pow_claimable_rewards_error");

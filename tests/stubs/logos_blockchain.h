@@ -254,8 +254,8 @@ FfiLeaderAgedNotesResult get_leader_aged_notes(
     const LogosBlockchainNode* node,
     const HeaderId* optional_tip);
 OperationStatus free_leader_aged_notes(LeaderAgedNotes notes);
-StringResult wallet_fund_tx(LogosBlockchainNode* node, const char* request_json);
-SubmitTransactionResult submit_signed_transaction(LogosBlockchainNode* node, const char* signed_tx_json);
+StringResult wallet_fund_tx(const LogosBlockchainNode* node, const char* request_json);
+SubmitTransactionResult submit_signed_transaction(const LogosBlockchainNode* node, const char* signed_tx_json);
 
 // Channel
 FfiChannelDepositResult channel_deposit(LogosBlockchainNode* node, const ChannelDepositArguments* arguments);
@@ -264,14 +264,14 @@ FfiChannelDepositResult channel_deposit_with_notes(
     const ChannelDepositWithNotesArguments* arguments);
 FfiClaimableVouchersResult get_claimable_vouchers(LogosBlockchainNode* node, const HeaderId* optional_tip);
 OperationStatus free_claimable_vouchers(ClaimableVouchers vouchers);
-StringResult get_channel_state(LogosBlockchainNode* node, const uint8_t* channel_id);
+StringResult get_channel_state(const LogosBlockchainNode* node, const uint8_t* channel_id);
 
 // Blend
 BlendHashResult blend_join_as_core_node(
-    LogosBlockchainNode* node,
+    const LogosBlockchainNode* node,
     const char* locator,
     const uint8_t* locked_note_id);
-StringResult blend_info(LogosBlockchainNode* node);
+StringResult blend_info(const LogosBlockchainNode* node);
 FfiGetChainIdResult get_chain_id(const LogosBlockchainNode* node);
 FfiNetworkInfoResult get_network_info_counters(const LogosBlockchainNode* node);
 
@@ -297,16 +297,16 @@ FfiDiagnosticJsonResult get_mantle_metrics(const LogosBlockchainNode* node);
 uint32_t cryptarchia_info_abi_version(void);
 CryptarchiaInfoResult get_cryptarchia_info(LogosBlockchainNode* node);
 OperationStatus free_cryptarchia_info(CryptarchiaInfo* info);
-StringResult get_block_events(LogosBlockchainNode* node, const HeaderId* header_id);
+StringResult get_block_events(const LogosBlockchainNode* node, const HeaderId* header_id);
 TimeInfoResult get_time_info_struct(const LogosBlockchainNode* node);
 OperationStatus free_time_info(TimeInfo* info);
 
-OperationStatus pow_start_mining(LogosBlockchainNode* node);
-OperationStatus pow_stop_mining(LogosBlockchainNode* node);
-OperationStatus pow_start_auto_claim(LogosBlockchainNode* node);
-OperationStatus pow_stop_auto_claim(LogosBlockchainNode* node);
-FfiPoWClaimResult pow_claim(LogosBlockchainNode* node, const uint8_t* claim_address);
-FfiPoWClaimableRewardsResult pow_claimable_rewards(LogosBlockchainNode* node);
+OperationStatus pow_start_mining(const LogosBlockchainNode* node);
+OperationStatus pow_stop_mining(const LogosBlockchainNode* node);
+OperationStatus pow_start_auto_claim(const LogosBlockchainNode* node);
+OperationStatus pow_stop_auto_claim(const LogosBlockchainNode* node);
+FfiPoWClaimResult pow_claim(const LogosBlockchainNode* node, const uint8_t* claim_address);
+FfiPoWClaimableRewardsResult pow_claimable_rewards(const LogosBlockchainNode* node);
 OperationStatus free_pow_claimable_rewards(PoWClaimableRewards rewards);
 
 // Memory management

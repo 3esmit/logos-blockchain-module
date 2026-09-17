@@ -727,12 +727,32 @@ void LogosBlockchainModule::on_processed_block_callback(const char* event) {
 
     struct CallbackScope {
         std::shared_ptr<CallbackLifetime> lifetime;
+        const void* previous = nullptr;
         ~CallbackScope() {
-            std::lock_guard<std::mutex> lock(lifetime->mutex);
-            --lifetime->inFlight;
-            lifetime->condition.notify_all();
+            LogosBlockchainNode* deferred_node = nullptr;
+            std::optional<DeferredLifecycle> deferred_lifecycle;
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                deferred_node = lifetime->deferredNode;
+                lifetime->deferredNode = nullptr;
+                deferred_lifecycle = std::move(lifetime->deferredLifecycle);
+                lifetime->deferredLifecycle.reset();
+                if (deferred_node) {
+                    lifetime->shutdownInProgress = true;
+                }
+            }
+            if (deferred_node) {
+                LogosBlockchainModule::dispatchDeferredShutdown(lifetime, deferred_node, std::move(deferred_lifecycle));
+            }
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                --lifetime->inFlight;
+                lifetime->condition.notify_all();
+            }
+            active_callback_lifetime = previous;
         }
-    } callback_scope{lifetime};
+    } callback_scope{lifetime, active_callback_lifetime};
+    active_callback_lifetime = lifetime.get();
 
     instance->processedBlock(event ? std::string(event) : std::string("null"));
 }
@@ -757,12 +777,32 @@ void LogosBlockchainModule::on_lib_block_callback(const char* event) {
 
     struct CallbackScope {
         std::shared_ptr<CallbackLifetime> lifetime;
+        const void* previous = nullptr;
         ~CallbackScope() {
-            std::lock_guard<std::mutex> lock(lifetime->mutex);
-            --lifetime->inFlight;
-            lifetime->condition.notify_all();
+            LogosBlockchainNode* deferred_node = nullptr;
+            std::optional<DeferredLifecycle> deferred_lifecycle;
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                deferred_node = lifetime->deferredNode;
+                lifetime->deferredNode = nullptr;
+                deferred_lifecycle = std::move(lifetime->deferredLifecycle);
+                lifetime->deferredLifecycle.reset();
+                if (deferred_node) {
+                    lifetime->shutdownInProgress = true;
+                }
+            }
+            if (deferred_node) {
+                LogosBlockchainModule::dispatchDeferredShutdown(lifetime, deferred_node, std::move(deferred_lifecycle));
+            }
+            {
+                std::lock_guard<std::mutex> lock(lifetime->mutex);
+                --lifetime->inFlight;
+                lifetime->condition.notify_all();
+            }
+            active_callback_lifetime = previous;
         }
-    } callback_scope{lifetime};
+    } callback_scope{lifetime, active_callback_lifetime};
+    active_callback_lifetime = lifetime.get();
 
     instance->libBlock(event ? std::string(event) : std::string("null"));
 }
